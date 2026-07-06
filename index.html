@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Relativistic Voyager Alpha</title>
+</head>
+<body>
+  <div id="app-root"></div>
+
+  <section id="intro-panel" class="panel intro-panel">
+    <h1>Relativistic Voyager</h1>
+    <p>相对论航行者：近光速星际旅行沉浸式 3D 可视化交互系统</p>
+    <button id="start-btn">开始任务</button>
+  </section>
+
+  <section id="control-panel" class="panel control-panel hidden">
+    <h2>飞船控制</h2>
+    <label>
+      速度 β = v/c
+      <input id="speed-slider" type="range" min="0" max="0.99" step="0.001" value="0" />
+    </label>
+    <div class="speed-row">
+      <button data-beta="0.1">0.1c</button>
+      <button data-beta="0.5">0.5c</button>
+      <button data-beta="0.8">0.8c</button>
+      <button data-beta="0.9">0.9c</button>
+      <button data-beta="0.99">0.99c</button>
+    </div>
+
+    <label>
+      参考系
+      <select id="frame-select">
+        <option value="earth">地球参考系 Earth frame</option>
+        <option value="ship">飞船参考系 Ship frame</option>
+        <option value="sideBySide">并列比较 Side-by-side</option>
+      </select>
+    </label>
+
+    <label>
+      显示模式
+      <select id="view-mode-select">
+        <option value="measured">Measured：物理测量模式</option>
+        <option value="observed">Observed：视觉观察模式</option>
+      </select>
+    </label>
+
+    <label>
+      行星轨道速度
+      <input id="orbit-speed-slider" type="range" min="0" max="2" step="0.01" value="0.08" />
+      <span class="slider-val" id="orbit-speed-val">0.08×</span>
+    </label>
+
+    <div class="button-row">
+      <button id="pause-btn">暂停</button>
+      <button id="reset-btn">重置</button>
+    </div>
+  </section>
+
+  <section id="hud-panel" class="panel hud-panel hidden">
+    <h2>Relativity HUD</h2>
+    <dl>
+      <dt>速度 β</dt><dd id="hud-beta">0.000</dd>
+      <dt>洛伦兹因子 γ</dt><dd id="hud-gamma">1.000</dd>
+      <dt>地球时间</dt><dd id="hud-earth-time">0.00 years</dd>
+      <dt>飞船固有时间</dt><dd id="hud-ship-time">0.00 years</dd>
+      <dt>地球系距离</dt><dd id="hud-earth-distance">4.24 ly</dd>
+      <dt>飞船系距离</dt><dd id="hud-ship-distance">4.24 ly</dd>
+      <dt>到达 ETA</dt><dd id="hud-eta">--</dd>
+      <dt>长度收缩比例</dt><dd id="hud-length-ratio">1.000</dd>
+    </dl>
+  </section>
+
+  <section id="mission-panel" class="panel mission-panel hidden">
+    <h2>学习任务</h2>
+    <h3 id="mission-title"></h3>
+    <p id="mission-description"></p>
+    <div id="mission-progress" class="progress"><span></span></div>
+    <button id="next-mission-btn">下一个任务</button>
+  </section>
+
+  <section id="concept-panel" class="panel concept-panel hidden">
+    <h2>概念解释</h2>
+    <div id="concept-tabs" class="tabs">
+      <button data-level="1" class="active">现象</button>
+      <button data-level="2">直观解释</button>
+      <button data-level="3">公式</button>
+      <button data-level="4">参考系</button>
+    </div>
+    <p id="concept-text"></p>
+  </section>
+
+  <section id="quiz-panel" class="panel quiz-panel hidden">
+    <h2>概念问答</h2>
+    <p id="quiz-question"></p>
+    <div id="quiz-options"></div>
+    <p id="quiz-feedback"></p>
+    <button id="next-quiz-btn">下一题</button>
+  </section>
+
+  <section id="spacetime-panel" class="panel spacetime-panel hidden">
+    <h2>Minkowski 时空图</h2>
+    <canvas id="spacetime-canvas" width="360" height="280"></canvas>
+    <p class="small-note">纵轴为时间 ct，横轴为空间 x；飞船速度越大，世界线越接近光锥。</p>
+  </section>
+
+  <section id="log-panel" class="panel log-panel hidden">
+    <h2>实验记录</h2>
+    <div class="button-row">
+      <button id="export-json-btn">导出 JSON</button>
+      <button id="export-csv-btn">导出 CSV</button>
+    </div>
+    <p class="small-note">记录速度调节、参考系切换、模式切换、任务与问答行为。</p>
+  </section>
+
+  <div id="mode-badge" class="mode-badge hidden">Measured / Earth</div>
+
+  <!-- Planet info popup card -->
+  <div id="planet-info-card" class="planet-info-card hidden"></div>
+
+  <!-- Relativistic tunnel vignette — darkens screen edges at near-light-speed -->
+  <div id="tunnel-vignette"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
