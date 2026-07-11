@@ -85,8 +85,9 @@ export class RelativisticVoyagerApp {
 
     // Relativistic visual effects
     this.baseFov = 65;        // camera FOV at rest
-    this._lastAberrationBeta = -1;   // cached beta for stellar aberration
-    this._aberrationActive = false;  // whether aberration is currently applied
+    this._lastAberrationBeta = -1;        // cached beta for stellar aberration
+    this._lastCameraForward = new THREE.Vector3();  // cached camera forward direction
+    this._aberrationActive = false;       // whether aberration is currently applied
 
     // Raycaster for planet click detection
     this.raycaster = new THREE.Raycaster();
@@ -510,21 +511,31 @@ export class RelativisticVoyagerApp {
       vignette.style.opacity = Math.min(0.92, b * 1.1);
     }
 
-    // Stellar aberration — first-person only, recompute only when beta changes
+    // Stellar aberration + Doppler colour shift — first-person only.
+    // Updates when beta changes OR camera direction changes (turning at max speed).
     if (this.state.viewPerspective === 'firstPerson') {
-      if (!this._aberrationActive || Math.abs(b - this._lastAberrationBeta) > 0.001) {
+      const camForward = new THREE.Vector3();
+      this.camera.getWorldDirection(camForward);
+
+      const betaChanged = Math.abs(b - this._lastAberrationBeta) > 0.001;
+      const dirChanged = this._lastCameraForward.lengthSq() < 0.01
+        || this._lastCameraForward.dot(camForward) < 0.9995;
+
+      if (!this._aberrationActive || betaChanged || dirChanged) {
         if (b > 0.001) {
-          this.starField.applyAberration(b);
+          this.starField.applyAberration(b, camForward);
         } else {
           this.starField.resetAberration();
         }
         this._lastAberrationBeta = b;
+        this._lastCameraForward.copy(camForward);
         this._aberrationActive = true;
       }
     } else if (this._aberrationActive) {
       this.starField.resetAberration();
       this._aberrationActive = false;
       this._lastAberrationBeta = -1;
+      this._lastCameraForward.set(0, 0, 0);
     }
 
     // ---- Animate solar system -------------------------------------------------
