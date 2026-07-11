@@ -68,6 +68,22 @@ export const PLANET_INFO = {
 
 const SCALE = 100;
 
+// Base orbit speed: Earth completes one orbit in 2π / 0.0172 ≈ 365.25 seconds
+const BASE_ORBIT_SPEED = 2 * Math.PI / 365.25;  // ≈ 0.01720
+
+// Real orbital speeds relative to Earth (Earth = 1.0).
+// Derived from orbital periods: speed ∝ 1/period.
+const RELATIVE_SPEEDS = {
+  Mercury: 365.25 / 88,      // 4.152
+  Venus:   365.25 / 225,     // 1.623
+  Earth:   1.0,
+  Mars:    365.25 / 687,     // 0.532
+  Jupiter: 1 / 11.86,        // 0.0843
+  Saturn:  1 / 29.46,        // 0.0339
+  Uranus:  1 / 84.01,        // 0.0119
+  Neptune: 1 / 164.8         // 0.00607
+};
+
 export class SolarSystem {
   constructor() {
     this.group = new THREE.Group();
@@ -76,22 +92,11 @@ export class SolarSystem {
     this.labels = [];
     this.moon = null;        // Moon reference for animation
 
-    // Orbit speed — much slower default (was 0.3), adjustable via UI
-    this._orbitSpeedMultiplier = 0.08;
-
     this._createSun();
     this._createPlanets();
     this._createMoon();
     this._createOrbits();
     this._createLabels();
-  }
-
-  /** Set orbit speed multiplier (0–2, default 0.08). 0 = frozen. */
-  set orbitSpeedMultiplier(v) {
-    this._orbitSpeedMultiplier = Math.max(0, Math.min(2, v));
-  }
-  get orbitSpeedMultiplier() {
-    return this._orbitSpeedMultiplier;
   }
 
   // ── Sun ────────────────────────────────────────────────────────────────────
@@ -203,21 +208,21 @@ export class SolarSystem {
 
   _createPlanets() {
     const planetDefs = [
-      { name: 'Mercury', radius: 0.08, orbit: 2.0, roughness: 0.7, metalness: 0.15, speed: 4.8,
+      { name: 'Mercury', radius: 0.08, orbit: 2.0, roughness: 0.7, metalness: 0.15,
         texGen: 'mercury' },
-      { name: 'Venus',   radius: 0.16, orbit: 3.2, roughness: 0.25, metalness: 0.05, speed: 3.5,
+      { name: 'Venus',   radius: 0.16, orbit: 3.2, roughness: 0.25, metalness: 0.05,
         texGen: 'venus' },
-      { name: 'Earth',   radius: 0.17, orbit: 4.6, roughness: 0.4, metalness: 0.05, speed: 2.9,
+      { name: 'Earth',   radius: 0.17, orbit: 4.6, roughness: 0.4, metalness: 0.05,
         texGen: 'earth', hasAtmo: true },
-      { name: 'Mars',    radius: 0.10, orbit: 6.0, roughness: 0.65, metalness: 0.1, speed: 2.4,
+      { name: 'Mars',    radius: 0.10, orbit: 6.0, roughness: 0.65, metalness: 0.1,
         texGen: 'mars' },
-      { name: 'Jupiter', radius: 0.48, orbit: 8.5, roughness: 0.45, metalness: 0.05, speed: 1.3,
+      { name: 'Jupiter', radius: 0.48, orbit: 8.5, roughness: 0.45, metalness: 0.05,
         texGen: 'jupiter' },
-      { name: 'Saturn',  radius: 0.40, orbit: 11.0, roughness: 0.35, metalness: 0.05, speed: 0.95,
+      { name: 'Saturn',  radius: 0.40, orbit: 11.0, roughness: 0.35, metalness: 0.05,
         texGen: 'saturn', hasRings: true },
-      { name: 'Uranus',  radius: 0.26, orbit: 13.8, roughness: 0.25, metalness: 0.05, speed: 0.68,
+      { name: 'Uranus',  radius: 0.26, orbit: 13.8, roughness: 0.25, metalness: 0.05,
         texGen: 'uranus', tilt: Math.PI / 2 * 0.85 },
-      { name: 'Neptune', radius: 0.25, orbit: 16.2, roughness: 0.25, metalness: 0.05, speed: 0.55,
+      { name: 'Neptune', radius: 0.25, orbit: 16.2, roughness: 0.25, metalness: 0.05,
         texGen: 'neptune' }
     ];
 
@@ -290,7 +295,7 @@ export class SolarSystem {
       this.group.add(planetGroup);
       this.planets.push({
         group: planetGroup, mesh,
-        orbitRadius: orbitR, speed: def.speed,
+        orbitRadius: orbitR, speed: RELATIVE_SPEEDS[def.name],
         angle: startAngle, name: def.name, def
       });
     }
@@ -869,8 +874,7 @@ export class SolarSystem {
       pivot: moonPivot,
       mesh: moonMesh,
       orbitRadius: moonOrbitR,
-      angle: Math.random() * Math.PI * 2,
-      speed: 13.0  // ~13 orbits per Earth year
+      angle: Math.random() * Math.PI * 2
     };
   }
 
@@ -964,16 +968,15 @@ export class SolarSystem {
   }
 
   update(dt) {
-    const spd = this._orbitSpeedMultiplier;
     for (const p of this.planets) {
-      p.angle += dt * p.speed * spd;
+      p.angle += dt * p.speed * BASE_ORBIT_SPEED;
       p.group.position.x = Math.cos(p.angle) * p.orbitRadius;
       p.group.position.z = Math.sin(p.angle) * p.orbitRadius;
-      p.mesh.rotation.y += dt * 0.5 * spd;
+      p.mesh.rotation.y += dt * 0.5 * BASE_ORBIT_SPEED;
     }
-    // Moon orbit
+    // Moon orbit — ~13 orbits per Earth year
     if (this.moon) {
-      this.moon.angle += dt * this.moon.speed * spd;
+      this.moon.angle += dt * 13.0 * BASE_ORBIT_SPEED;
       this.moon.pivot.rotation.y = this.moon.angle;
     }
     // Subtle sun pulsation

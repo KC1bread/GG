@@ -53,12 +53,6 @@
       </select>
     </label>
 
-    <label>
-      行星轨道速度
-      <input id="orbit-speed-slider" type="range" min="0" max="2" step="0.01" value="0.08" />
-      <span class="slider-val" id="orbit-speed-val">0.08×</span>
-    </label>
-
     <div class="button-row">
       <button id="pause-btn">暂停</button>
       <button id="reset-btn">重置</button>
@@ -125,6 +119,13 @@
 
   <!-- Planet info popup card -->
   <div id="planet-info-card" class="planet-info-card hidden"></div>
+
+  <!-- First-person crosshair (reticle) -->
+  <div id="crosshair" class="hidden">
+    <div class="crosshair-h"></div>
+    <div class="crosshair-v"></div>
+    <div class="crosshair-dot"></div>
+  </div>
 
   <!-- Relativistic tunnel vignette — darkens screen edges at near-light-speed -->
   <div id="tunnel-vignette"></div>

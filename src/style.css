@@ -344,6 +344,42 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   line-height: 1.6;
 }
 
+/* ---- First-person crosshair ---- */
+#crosshair {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  z-index: 10;
+}
+#crosshair.hidden { display: none; }
+.crosshair-h,
+.crosshair-v {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(180, 220, 255, 0.55);
+  border-radius: 1px;
+}
+.crosshair-h {
+  width: 28px;
+  height: 2px;
+}
+.crosshair-v {
+  width: 2px;
+  height: 28px;
+}
+.crosshair-dot {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(220, 240, 255, 0.7);
+  box-shadow: 0 0 4px rgba(160, 210, 255, 0.5);
+}
+
 /* ---- Relativistic tunnel vignette ---- */
 #tunnel-vignette {
   position: fixed;

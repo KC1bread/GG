@@ -89,6 +89,13 @@ export class RelativisticVoyagerApp {
     this._lastCameraForward = new THREE.Vector3();  // cached camera forward direction
     this._aberrationActive = false;       // whether aberration is currently applied
 
+    // Free-look state — toggle with P key, mouse to look around
+    this.freeLookYaw = 0;          // horizontal angle offset from ship heading
+    this.freeLookPitch = 0;        // vertical angle (-π/2 … π/2)
+    this._freeLookActive = false;  // right mouse button held
+    this._freeLookToggled = false; // P-key toggle — persists until pressed again
+    this._mouseSensitivity = 0.004;
+
     // Raycaster for planet click detection
     this.raycaster = new THREE.Raycaster();
     this.mouse = new THREE.Vector2();
@@ -190,17 +197,6 @@ export class RelativisticVoyagerApp {
       '#concept-panel', '#quiz-panel', '#spacetime-panel', '#log-panel'
     ]);
 
-    // Orbit speed slider
-    const orbitSlider = document.getElementById('orbit-speed-slider');
-    const orbitVal = document.getElementById('orbit-speed-val');
-    if (orbitSlider && orbitVal) {
-      orbitSlider.addEventListener('input', () => {
-        const v = parseFloat(orbitSlider.value);
-        this.solarSystem.orbitSpeedMultiplier = v;
-        orbitVal.textContent = v.toFixed(2) + '×';
-      });
-    }
-
     this.onStateChanged();
   }
 
@@ -222,6 +218,12 @@ export class RelativisticVoyagerApp {
     // V key — toggle perspective (only on press, not release)
     if (key === 'v' || key === 'V') {
       if (pressed) this._togglePerspective();
+      return;
+    }
+
+    // P key — toggle free-look mode
+    if (key === 'p' || key === 'P') {
+      if (pressed) this._toggleFreeLook();
       return;
     }
 
@@ -254,6 +256,10 @@ export class RelativisticVoyagerApp {
     const sel = document.getElementById('perspective-select');
     if (sel) sel.value = mode;
 
+    // Reset free-look angles when switching perspective
+    this.freeLookYaw = 0;
+    this.freeLookPitch = 0;
+
     // Adjust FOV: wider for first-person immersion
     if (mode === 'firstPerson') {
       this.camera.fov = 90;
@@ -272,14 +278,40 @@ export class RelativisticVoyagerApp {
     });
   }
 
+  /**
+   * Toggle free-look mode on/off with P key.
+   * When toggled on, mouse movement directly controls view direction
+   * without needing to hold any button. Press P again or Esc to exit.
+   */
+  _toggleFreeLook() {
+    this._freeLookToggled = !this._freeLookToggled;
+    const canvas = this.renderer.domElement;
+
+    if (this._freeLookToggled) {
+      // Reset mouse anchor so the next mousemove re-initialises from the
+      // current cursor position (avoids NaN when _lastMouse* are undefined
+      // because mousedown never fired).
+      this._lastMouseX = undefined;
+      this._lastMouseY = undefined;
+      canvas.style.cursor = 'move';
+      this.logger.log('freelook_toggle', { active: true });
+    } else {
+      canvas.style.cursor = '';
+      this.logger.log('freelook_toggle', { active: false });
+    }
+  }
+
   // ---- Mouse / Planet click detection ----------------------------------------
 
   setupMouse() {
-    this.renderer.domElement.addEventListener('click', (e) => {
+    const canvas = this.renderer.domElement;
+
+    // ---- Left click — planet info -------------------------------------------
+    canvas.addEventListener('click', (e) => {
       // Ignore clicks on UI panels
       if (e.target.closest('.panel') || e.target.closest('.panel-dock')) return;
 
-      const rect = this.renderer.domElement.getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
       this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
 
@@ -300,9 +332,57 @@ export class RelativisticVoyagerApp {
       }
     });
 
-    // Hide info when pressing Escape
+    // ---- Right click drag — free-look ---------------------------------------
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button === 2) {
+        this._freeLookActive = true;
+        this._lastMouseX = e.clientX;
+        this._lastMouseY = e.clientY;
+        e.preventDefault();
+      }
+    });
+
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 2) {
+        this._freeLookActive = false;
+      }
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      // Free-look active if P-toggle is on OR right mouse button is held
+      if (!this._freeLookToggled && !this._freeLookActive) return;
+
+      // Initialize mouse anchor on first move (handles P-toggle where
+      // mousedown never fired, so _lastMouse* are undefined).
+      if (this._lastMouseX === undefined) {
+        this._lastMouseX = e.clientX;
+        this._lastMouseY = e.clientY;
+        return;
+      }
+
+      const dx = e.clientX - this._lastMouseX;
+      const dy = e.clientY - this._lastMouseY;
+      this._lastMouseX = e.clientX;
+      this._lastMouseY = e.clientY;
+
+      this.freeLookYaw -= dx * this._mouseSensitivity;
+      this.freeLookPitch -= dy * this._mouseSensitivity;
+      // Clamp pitch so you can't flip over
+      this.freeLookPitch = Math.max(
+        -Math.PI / 2 + 0.02,
+        Math.min(Math.PI / 2 - 0.02, this.freeLookPitch)
+      );
+    });
+
+    // Prevent context menu on right-click over the canvas
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Hide info / exit free-look when pressing Escape
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this._hidePlanetInfo();
+      if (e.key === 'Escape') {
+        this._hidePlanetInfo();
+        if (this._freeLookToggled) this._toggleFreeLook();
+      }
     });
   }
 
@@ -475,7 +555,7 @@ export class RelativisticVoyagerApp {
 
     // ---- Camera (first-person cockpit or third-person chase cam) --------------
     if (this.state.viewPerspective === 'firstPerson') {
-      // First-person: camera at cockpit position, looking forward
+      // First-person: camera at cockpit position, free-look from ship heading
       const fpOffset = this.firstPersonOffset.clone();
       fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
       const fpCamPos = this.shipPosition.clone().add(fpOffset);
@@ -484,18 +564,21 @@ export class RelativisticVoyagerApp {
       this._smoothCamPos.lerp(fpCamPos, this.cameraLerp * 2.0);
       this.camera.position.copy(this._smoothCamPos);
 
-      // Look in ship's forward direction (a point far ahead)
-      const forward = new THREE.Vector3(
-        -Math.sin(this.shipHeading), 0, -Math.cos(this.shipHeading)
+      // Look direction = ship heading + free-look yaw/pitch
+      const totalYaw = this.shipHeading + this.freeLookYaw;
+      const cosPitch = Math.cos(this.freeLookPitch);
+      const lookDir = new THREE.Vector3(
+        -Math.sin(totalYaw) * cosPitch,
+        Math.sin(this.freeLookPitch),
+        -Math.cos(totalYaw) * cosPitch
       );
-      const lookTarget = this.shipPosition.clone().add(
-        forward.multiplyScalar(100)
-      );
-      this.camera.lookAt(lookTarget);
+      this.camera.lookAt(this.camera.position.clone().add(lookDir));
     } else {
-      // Third-person: chase cam behind the spacecraft
-      const rotatedOffset = this.cameraLocalOffset.clone();
-      rotatedOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
+      // Third-person: chase cam orbiting ship via free-look yaw/pitch
+      const totalYaw = this.shipHeading + this.freeLookYaw;
+      // Rotate default offset (behind + above) by total yaw + pitch
+      const euler = new THREE.Euler(this.freeLookPitch, totalYaw, 0, 'YXZ');
+      const rotatedOffset = this.cameraLocalOffset.clone().applyEuler(euler);
       const desiredCamPos = this.shipPosition.clone().add(rotatedOffset);
 
       this._smoothCamPos.lerp(desiredCamPos, this.cameraLerp);
@@ -504,6 +587,12 @@ export class RelativisticVoyagerApp {
     }
 
     // ---- Relativistic visual effects -------------------------------------------
+    // Crosshair — visible only in first-person view
+    const crosshair = document.getElementById('crosshair');
+    if (crosshair) {
+      crosshair.classList.toggle('hidden', this.state.viewPerspective !== 'firstPerson');
+    }
+
     // Vignette overlay — darkens periphery at high β for tunnel sensation
     const b = this.state.beta;
     const vignette = document.getElementById('tunnel-vignette');
