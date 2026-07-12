@@ -5,10 +5,23 @@ import * as THREE from 'three';
  * Grid and standalone Earth have been removed; the SolarSystem provides all planets.
  */
 export function addReferenceScene(scene) {
-  // ---- Lighting — pure ambient only, no directional lights ------------------
-  // Planets are lit uniformly from all directions; no bright/dark side.
-  const ambient = new THREE.AmbientLight(0xfff8ee, 1.6);
+  // ---- PBR lighting — balanced ambient + hemisphere + sun directional -----------
+  // Hemisphere: warm sky / cool ground for subtle colour variation
+  const hemiLight = new THREE.HemisphereLight(0xffeedd, 0x223344, 0.2);
+  scene.add(hemiLight);
+
+  // Ambient fill — low base so dark sides are visible but clearly in shadow
+  const ambient = new THREE.AmbientLight(0xfff8ee, 0.3);
   scene.add(ambient);
+
+  // Main sun light — primary directional light revealing PBR normal map detail.
+  // Positioned off-origin so the light direction is well-defined.
+  // Intensity balanced so lit side is bright (~1.0–1.1 total) without clipping to white.
+  const sunLight = new THREE.DirectionalLight(0xfff4e8, 0.7);
+  sunLight.position.set(0, 10, 1);
+  sunLight.target.position.set(0, 0, 0);
+  scene.add(sunLight);
+  scene.add(sunLight.target);
 
   // ---- Target star (Proxima Centauri / destination, far away) -----------------
   const targetGroup = new THREE.Group();
