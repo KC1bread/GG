@@ -91,12 +91,17 @@ export class SolarSystem {
     this.orbits = [];
     this.labels = [];
     this.moon = null;        // Moon reference for animation
+    this._flameLayers = [];  // Dynamic flame shader meshes
+    this._flameTime = 0;     // Flame animation timer
 
     this._createSun();
     this._createPlanets();
     this._createMoon();
     this._createOrbits();
     this._createLabels();
+
+    // Load high-res PIT textures asynchronously (replaces procedural when ready)
+    this._loadPITTextures();
   }
 
   // ── Sun ────────────────────────────────────────────────────────────────────
@@ -105,30 +110,62 @@ export class SolarSystem {
     const sunGroup = new THREE.Group();
     const R = 1.2 * SCALE;  // 120
 
-    // Main sphere — use a canvas texture for granular surface
+    // Main sphere — canvas texture for granular surface
     const sunTex = this._generateSunTexture();
     const sunGeo = new THREE.SphereGeometry(R, 64, 32);
     const sunMat = new THREE.MeshBasicMaterial({ map: sunTex });
     const sunCore = new THREE.Mesh(sunGeo, sunMat);
     sunGroup.add(sunCore);
 
-    // Inner glow
-    const glowGeo1 = new THREE.SphereGeometry(R * 1.12, 48, 24);
-    const glowMat1 = new THREE.MeshBasicMaterial({
-      color: 0xffcc44, transparent: true, opacity: 0.2, depthWrite: false
+    // ── Dynamic flame layers ─────────────────────────────────────────────────
+    // Layer 1: Chromosphere — dense, bright, close to surface, fast moving
+    const flameGeo1 = new THREE.SphereGeometry(R * 1.05, 64, 32);
+    const flameMat1 = this._createFlameMaterial({
+      baseColor: new THREE.Color(0xffdd55),
+      tipColor:  new THREE.Color(0xff7722),
+      displacementScale: R * 0.06,
+      noiseScale: 0.8,
+      speed: 0.16,
+      opacity: 0.78,
     });
-    sunGroup.add(new THREE.Mesh(glowGeo1, glowMat1));
+    const flame1 = new THREE.Mesh(flameGeo1, flameMat1);
+    flame1.renderOrder = 1;
+    sunGroup.add(flame1);
+    this._flameLayers.push(flame1);
 
-    // Outer glow
-    const glowGeo2 = new THREE.SphereGeometry(R * 1.35, 32, 16);
-    const glowMat2 = new THREE.MeshBasicMaterial({
-      color: 0xff9922, transparent: true, opacity: 0.08, depthWrite: false
+    // Layer 2: Mid corona — medium displacement, rich orange tones
+    const flameGeo2 = new THREE.SphereGeometry(R * 1.18, 48, 24);
+    const flameMat2 = this._createFlameMaterial({
+      baseColor: new THREE.Color(0xff9922),
+      tipColor:  new THREE.Color(0xcc4400),
+      displacementScale: R * 0.14,
+      noiseScale: 0.5,
+      speed: 0.11,
+      opacity: 0.5,
     });
-    sunGroup.add(new THREE.Mesh(glowGeo2, glowMat2));
+    const flame2 = new THREE.Mesh(flameGeo2, flameMat2);
+    flame2.renderOrder = 2;
+    sunGroup.add(flame2);
+    this._flameLayers.push(flame2);
 
-    // Corona sprites
-    for (let i = 0; i < 3; i++) {
-      const sprite = this._makeGlowSprite(0xffcc66, (3.0 + i * 1.2) * SCALE, 0.12 - i * 0.03);
+    // Layer 3: Outer corona — wispy, large sweeping prominences
+    const flameGeo3 = new THREE.SphereGeometry(R * 1.42, 32, 16);
+    const flameMat3 = this._createFlameMaterial({
+      baseColor: new THREE.Color(0xff6600),
+      tipColor:  new THREE.Color(0x881100),
+      displacementScale: R * 0.30,
+      noiseScale: 0.3,
+      speed: 0.06,
+      opacity: 0.22,
+    });
+    const flame3 = new THREE.Mesh(flameGeo3, flameMat3);
+    flame3.renderOrder = 3;
+    sunGroup.add(flame3);
+    this._flameLayers.push(flame3);
+
+    // ── Outer glow sprites — subtle ambient scattered light ──────────────────
+    for (let i = 0; i < 2; i++) {
+      const sprite = this._makeGlowSprite(0xff9944, (3.8 + i * 2.0) * SCALE, 0.07 - i * 0.025);
       sunGroup.add(sprite);
     }
 
@@ -291,6 +328,146 @@ export class SolarSystem {
     const sprite = new THREE.Sprite(mat);
     sprite.scale.set(scale, scale, 1);
     return sprite;
+  }
+
+  /**
+   * Create a custom ShaderMaterial for dynamic solar flames.
+   * Uses multi-octave 3D noise to displace sphere vertices outward,
+   * producing organic flame-like corona layers around the Sun.
+   *
+   * @param {Object} opts
+   * @param {THREE.Color} opts.baseColor   - colour at surface (hot)
+   * @param {THREE.Color} opts.tipColor    - colour at flame tips (cooler)
+   * @param {number} opts.displacementScale - max vertex displacement in world units
+   * @param {number} opts.noiseScale       - spatial frequency of noise
+   * @param {number} opts.speed            - animation speed multiplier
+   * @param {number} opts.opacity          - base opacity
+   */
+  _createFlameMaterial(opts) {
+    const {
+      baseColor = new THREE.Color(0xff8830),
+      tipColor  = new THREE.Color(0xff4400),
+      displacementScale = 5.0,
+      noiseScale = 0.5,
+      speed = 0.1,
+      opacity = 0.7,
+    } = opts;
+
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTime:               { value: 0 },
+        uDisplacementScale:  { value: displacementScale },
+        uNoiseScale:         { value: noiseScale },
+        uSpeed:              { value: speed },
+        uBaseColor:          { value: baseColor },
+        uTipColor:           { value: tipColor },
+        uOpacity:            { value: opacity },
+      },
+
+      vertexShader: /* glsl */ `
+        varying float vDisplacement;
+        varying vec3  vWorldNormal;
+        varying vec3  vWorldPos;
+        varying vec3  vLocalPos;
+
+        uniform float uTime;
+        uniform float uDisplacementScale;
+        uniform float uNoiseScale;
+        uniform float uSpeed;
+
+        // ── 3D value noise ──────────────────────────────────────────────
+        float hash(vec3 p) {
+          float h = dot(p, vec3(127.1, 311.7, 74.7));
+          return fract(sin(h) * 43758.5453);
+        }
+
+        float noise3D(vec3 p) {
+          vec3 i = floor(p);
+          vec3 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);           // smoothstep
+          return mix(
+            mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
+                mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+            mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+        }
+
+        // ── FBM (4 octaves) ────────────────────────────────────────────
+        float fbm(vec3 p) {
+          float sum = 0.0;
+          float amp = 1.0;
+          float freq = 1.0;
+          for (int i = 0; i < 4; i++) {
+            sum += amp * noise3D(p * freq);
+            amp *= 0.5;
+            freq *= 2.0;
+          }
+          return sum * 0.65;   // normalise to ~0–1
+        }
+
+        void main() {
+          vec3 noiseInput = position * uNoiseScale;
+
+          // Two independent noise channels for organic variation
+          float n1 = fbm(noiseInput + uTime * uSpeed);
+          float n2 = fbm(noiseInput * 1.7 + uTime * uSpeed * 0.7 + 5.73) * 0.55;
+          float noiseVal = n1 + n2;
+
+          // Reduce displacement at poles (real Sun has less coronal activity there)
+          float yNorm = abs(position.y) / length(position);
+          float latFactor = 1.0 - yNorm * 0.65;
+
+          float displacement = noiseVal * uDisplacementScale * latFactor;
+
+          // Allow tiny inward dips (10 % of outward) for filament-like detail
+          displacement -= uDisplacementScale * 0.06;
+
+          vec3 newPos = position + normal * displacement;
+
+          // Pass normalised displacement to fragment shader for colour ramp
+          vDisplacement = clamp(noiseVal * latFactor, 0.0, 1.0);
+
+          vec4 worldPos = modelMatrix * vec4(newPos, 1.0);
+          vWorldPos    = worldPos.xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vLocalPos    = position;
+
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos, 1.0);
+        }
+      `,
+
+      fragmentShader: /* glsl */ `
+        varying float vDisplacement;
+        varying vec3  vWorldNormal;
+        varying vec3  vWorldPos;
+        varying vec3  vLocalPos;
+
+        uniform vec3  uBaseColor;
+        uniform vec3  uTipColor;
+        uniform float uOpacity;
+        uniform float uTime;
+
+        void main() {
+          // Colour ramp: surface (hot / bright) → tip (deeper orange-red)
+          float t = clamp(vDisplacement, 0.0, 1.0);
+          vec3 colour = mix(uBaseColor, uTipColor, t);
+
+          // Subtle pulse based on world position + time
+          float pulse = 0.88
+            + 0.12 * sin(vWorldPos.x * 0.4 + uTime * 2.3)
+                   * cos(vWorldPos.z * 0.4 + uTime * 1.9);
+
+          // Wispy tips: fade alpha as displacement increases
+          float alpha = uOpacity * (1.0 - t * 0.82) * pulse;
+
+          gl_FragColor = vec4(colour * pulse, alpha);
+        }
+      `,
+
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
   }
 
   // ── Planets ────────────────────────────────────────────────────────────────
@@ -612,388 +789,129 @@ export class SolarSystem {
 
   /** Earth — realistic continent shapes with interior terrain detail */
   _generateEarthTexture() {
-    const w = 1024, h = 512;
+    const w = 512, h = 256;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
 
-    // ── Utility: draw a filled polygon from vertex array ──────────────────────
-    const drawPoly = (verts, color) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(verts[0][0], verts[0][1]);
-      for (let i = 1; i < verts.length; i++) ctx.lineTo(verts[i][0], verts[i][1]);
-      ctx.closePath();
-      ctx.fill();
-    };
-
-    // ── Utility: draw a filled ellipse ────────────────────────────────────────
-    const drawEllipse = (cx, cy, rx, ry, color, rot = 0) => {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, rot, 0, Math.PI * 2);
-      ctx.fill();
-    };
-
-    // ── Utility: draw with coastal noise along outline ─────────────────────────
-    const drawWithCoastNoise = (verts, color, noiseScale = 3) => {
-      // Blurred outline for anti-aliased edge
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.moveTo(verts[0][0], verts[0][1]);
-      for (let i = 1; i < verts.length; i++) {
-        ctx.lineTo(verts[i][0], verts[i][1]);
-      }
-      ctx.closePath();
-      ctx.fill();
-
-      // Draw subtle edge noise along borders
-      ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(verts[0][0], verts[0][1]);
-      for (let i = 1; i < verts.length; i++) {
-        ctx.lineTo(verts[i][0], verts[i][1]);
-      }
-      ctx.closePath();
-      ctx.clip();
-
-      // Interior detail noise
-      for (let i = 0; i < 600; i++) {
-        const x = Math.random() * w;
-        const y = Math.random() * h;
-        const alpha = Math.random() * 0.08;
-        const r = Math.random() * 4 + 1;
-        ctx.fillStyle = Math.random() > 0.5
-          ? `rgba(255,255,255,${alpha})`
-          : `rgba(0,0,0,${alpha * 0.6})`;
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.restore();
-    };
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // OCEAN BASE
-    // ═══════════════════════════════════════════════════════════════════════════
+    // Ocean base
     const oceanGrad = ctx.createLinearGradient(0, 0, 0, h);
-    oceanGrad.addColorStop(0, '#1a5588');
-    oceanGrad.addColorStop(0.2, '#1d5e99');
-    oceanGrad.addColorStop(0.5, '#256cb0');
-    oceanGrad.addColorStop(0.8, '#1d5e99');
+    oceanGrad.addColorStop(0, '#1a5588'); oceanGrad.addColorStop(0.25, '#2266aa');
+    oceanGrad.addColorStop(0.5, '#3377cc'); oceanGrad.addColorStop(0.75, '#2266aa');
     oceanGrad.addColorStop(1, '#1a5588');
     ctx.fillStyle = oceanGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CONTINENTS — carefully plotted equirectangular outlines
-    // x: 0=180°W(Greenwich-180), 512=0°(Greenwich), 1024=180°E
-    // y: 0=90°N, 256=Equator, 512=90°S
-    // ═══════════════════════════════════════════════════════════════════════════
+    // Helper: draw irregular continent shape
+    const drawContinent = (pts, fillColor) => {
+      ctx.fillStyle = fillColor;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i][0], pts[i][1]);
+      }
+      ctx.closePath();
+      ctx.fill();
+    };
 
-    // ── NORTH AMERICA ─────────────────────────────────────────────────────────
-    const northAmerica = [
-      // Alaska / Arctic coast
-      [36, 28], [58, 22], [82, 20], [108, 18], [130, 20], [150, 28],
-      [165, 36], [178, 44], [186, 52], [190, 68],
-      // Hudson Bay indent
-      [180, 72], [168, 65], [158, 60],
-      // Eastern Canada / Labrador
-      [195, 52], [215, 38], [235, 32], [255, 36], [268, 42], [275, 52],
-      // US East Coast
-      [278, 62], [272, 73], [260, 84], [252, 92], [240, 98],
-      // Florida / Gulf of Mexico
-      [235, 102], [228, 108], [222, 114], [210, 118], [198, 116],
-      [188, 108], [178, 100], [170, 106], [160, 112], [150, 118],
-      // Central America
-      [148, 125], [155, 132], [150, 138],
-      // Mexico
-      [142, 130], [132, 122], [120, 114], [108, 106], [100, 100],
-      [90, 94], [80, 88], [68, 80], [56, 72],
-      // Baja / California
-      [52, 64], [48, 56], [44, 46], [38, 38],
-    ];
-    drawWithCoastNoise(northAmerica, '#5a8a3c');
+    // North America-like
+    drawContinent([
+      [60, 30], [140, 20], [180, 40], [200, 70], [170, 100],
+      [140, 110], [90, 95], [50, 80], [30, 55]
+    ], '#5a8a3c');
+    drawContinent([
+      [70, 35], [130, 28], [165, 48], [155, 80],
+      [100, 85], [60, 65], [45, 45]
+    ], '#6b9a44');
 
-    // Interior highlight (lighter green — plains / farmland)
-    const naInterior = [
-      [80, 40], [110, 34], [140, 38], [170, 44], [180, 55],
-      [170, 58], [160, 56], [150, 52], [140, 55], [130, 62],
-      [120, 68], [140, 72], [170, 66], [200, 58], [225, 48],
-      [245, 46], [255, 55], [250, 65], [235, 72], [210, 78],
-      [180, 82], [158, 80], [148, 75], [135, 72], [118, 68],
-      [105, 60], [90, 52], [82, 45],
-    ];
-    drawPoly(naInterior, '#6e9e4c');
+    // South America-like
+    drawContinent([
+      [155, 110], [170, 100], [185, 115], [190, 140],
+      [175, 165], [160, 170], [145, 155], [140, 130]
+    ], '#4a8a2a');
+    drawContinent([
+      [160, 115], [178, 125], [172, 150],
+      [158, 158], [148, 138]
+    ], '#5a9a35');
 
-    // Canadian Shield (darker)
-    drawEllipse(160, 52, 55, 28, '#4a7a30', 0.3);
-    // US Midwest (lighter green / yellow-green)
-    drawEllipse(195, 64, 35, 18, '#7a9e44', 0);
-    // Mexico highlands (drier)
-    drawEllipse(155, 108, 30, 16, '#8a8a40', 0.3);
+    // Europe-like
+    drawContinent([
+      [230, 30], [270, 25], [300, 35], [310, 50],
+      [280, 65], [250, 60], [225, 45]
+    ], '#7aaa50');
 
-    // ── GREENLAND ─────────────────────────────────────────────────────────────
-    const greenland = [
-      [288, 14], [305, 10], [320, 12], [332, 18], [336, 28],
-      [330, 38], [318, 44], [300, 42], [288, 36], [280, 26], [282, 18],
-    ];
-    drawWithCoastNoise(greenland, '#e8ecef');
-    drawEllipse(310, 28, 18, 12, '#f0f4f6', 0);
+    // Africa-like
+    drawContinent([
+      [240, 65], [270, 60], [290, 70], [295, 100],
+      [280, 130], [260, 145], [245, 130], [235, 100], [230, 80]
+    ], '#8aaa40');
+    // Sahara
+    drawContinent([
+      [240, 60], [275, 55], [288, 68],
+      [265, 75], [238, 72]
+    ], '#c4b070');
 
-    // ── SOUTH AMERICA ─────────────────────────────────────────────────────────
-    const southAmerica = [
-      // North coast (Venezuela/Colombia)
-      [155, 118], [170, 114], [190, 112], [210, 116], [228, 120], [238, 128],
-      // Brazil east bulge
-      [246, 136], [250, 148], [244, 158], [236, 164],
-      // Southern cone (Argentina)
-      [228, 172], [220, 180], [212, 190], [208, 200], [200, 208],
-      // Chile coast
-      [194, 204], [188, 194], [184, 184], [180, 174], [176, 164],
-      // Peru/Ecuador
-      [172, 152], [168, 140], [164, 130], [160, 122],
-    ];
-    drawWithCoastNoise(southAmerica, '#4a8a2a');
+    // Asia-like
+    drawContinent([
+      [310, 25], [370, 15], [420, 20], [450, 35], [440, 55],
+      [400, 65], [350, 60], [320, 50], [305, 40]
+    ], '#6d8a3a');
+    // India
+    drawContinent([
+      [360, 60], [375, 55], [380, 75], [370, 90], [355, 80]
+    ], '#5a8a30');
+    // SE Asia
+    drawContinent([
+      [385, 70], [410, 65], [420, 80], [400, 90], [380, 85]
+    ], '#5a9035');
 
-    // Amazon basin (dark green)
-    drawEllipse(208, 140, 36, 22, '#2d7020', 0.1);
-    // Brazilian highlands (lighter)
-    drawEllipse(230, 150, 18, 12, '#6a9440', 0);
-    // Andes spine (brownish)
-    drawEllipse(178, 152, 12, 50, '#8a7a50', 0.1);
-    // Patagonia (drier)
-    drawEllipse(210, 190, 18, 20, '#8a8450', 0);
+    // Australia-like
+    drawContinent([
+      [400, 110], [430, 105], [445, 115], [440, 135],
+      [420, 140], [400, 130], [390, 118]
+    ], '#c48840');
 
-    // ── EUROPE ────────────────────────────────────────────────────────────────
-    const europe = [
-      // British Isles
-      [448, 42], [455, 38], [462, 42], [460, 50], [452, 52], [444, 48],
-      // Scandinavia
-      [475, 16], [490, 12], [510, 14], [525, 18], [535, 26],
-      [530, 36], [520, 44], [510, 48], [498, 44], [488, 34], [478, 24],
-      // Western Europe
-      [460, 54], [472, 50], [490, 48], [505, 50], [520, 52],
-      [525, 58], [518, 62], [508, 60], [495, 58],
-      // Mediterranean coast
-      [480, 62], [468, 66], [460, 68], [452, 72], [446, 68], [448, 60],
-      // Iberian Peninsula
-      [444, 72], [438, 76], [430, 74], [425, 68], [430, 62], [440, 58],
-      // Italian peninsula
-      [485, 66], [488, 70], [486, 76], [482, 74], [480, 68],
-      // Greece / Balkans
-      [500, 66], [505, 70], [502, 76], [496, 74], [492, 68],
-    ];
-    drawWithCoastNoise(europe, '#78a84c');
-
-    // Central European plains
-    drawEllipse(485, 52, 38, 14, '#8aae58', 0.1);
-    // Alps (darker / higher)
-    drawEllipse(478, 62, 14, 6, '#6a8a3e', 0.2);
-
-    // ── AFRICA ────────────────────────────────────────────────────────────────
-    const africa = [
-      // North coast (Morocco to Egypt)
-      [438, 68], [448, 65], [465, 63], [480, 62], [498, 62], [515, 62],
-      [530, 64], [542, 66], [550, 70], [555, 76],
-      // Horn of Africa
-      [560, 82], [562, 90], [558, 96], [550, 98],
-      // East Africa
-      [542, 108], [538, 120], [535, 132], [532, 142], [528, 150],
-      // Southern Africa
-      [522, 158], [515, 164], [508, 166], [498, 162], [490, 156],
-      // West coast (Angola to Gulf of Guinea)
-      [484, 148], [478, 138], [474, 128], [470, 118], [465, 108],
-      [458, 98], [452, 88], [445, 80], [440, 74],
-    ];
-    drawWithCoastNoise(africa, '#84a840');
-
-    // Sahara (desert tan)
-    drawEllipse(488, 78, 55, 22, '#c8b870', 0);
-    // Sahel (transition zone)
-    drawEllipse(488, 96, 50, 10, '#a09848', 0);
-    // Congo basin (dark green rainforest)
-    drawEllipse(498, 118, 25, 20, '#2d6e1e', 0);
-    // East African highlands
-    drawEllipse(535, 125, 18, 22, '#7a9040', 0.1);
-    // Kalahari / Southern savannah
-    drawEllipse(505, 150, 20, 16, '#9a9440', 0);
-    // Madagascar
-    drawEllipse(558, 142, 5, 14, '#6a9038', 0.1);
-
-    // ── ASIA ──────────────────────────────────────────────────────────────────
-    const asia = [
-      // Russia (northern coast)
-      [538, 22], [570, 16], [610, 14], [660, 12], [710, 14], [750, 18],
-      [790, 22], [820, 28], [840, 36], [848, 44],
-      // Kamchatka / Russian Far East
-      [842, 52], [835, 56], [826, 52], [818, 46],
-      // Eastern China coast
-      [805, 54], [795, 60], [782, 66], [770, 74], [758, 80],
-      // SE Asia (Vietnam, Thailand)
-      [750, 84], [742, 92], [735, 98], [728, 106],
-      // Malay peninsula
-      [720, 112], [715, 118], [710, 122],
-      // Indonesia chain (represented as dots)
-      // India
-      [678, 68], [682, 62], [675, 58], [662, 62], [648, 68],
-      [640, 76], [636, 86], [640, 96], [648, 104], [660, 108],
-      [672, 106], [682, 98], [686, 88], [684, 78],
-      // Middle East
-      [560, 64], [570, 64], [582, 66], [595, 68], [610, 70],
-      [620, 74], [625, 78], [618, 82], [608, 80], [595, 76],
-      [580, 72], [568, 68],
-      // Central Asia / Kazakhstan
-      [600, 48], [620, 42], [650, 38], [680, 36], [710, 38],
-      [735, 44], [720, 52], [700, 54], [670, 52], [640, 50], [610, 50],
-    ];
-    drawWithCoastNoise(asia, '#6d8a3a');
-
-    // Siberian taiga (dark)
-    drawEllipse(680, 30, 110, 20, '#4a7038', 0.1);
-    // Central Asian steppe (tan/gold)
-    drawEllipse(660, 44, 55, 14, '#b0a858', 0);
-    // Gobi desert
-    drawEllipse(740, 52, 20, 10, '#c8b868', 0);
-    // Chinese plains (green)
-    drawEllipse(760, 60, 28, 14, '#7a9a42', 0);
-    // India subcontinent (dark green)
-    drawEllipse(660, 76, 22, 22, '#408028', 0);
-    // Deccan plateau
-    drawEllipse(660, 90, 16, 12, '#6a8a38', 0);
-    // Arabian peninsula (desert)
-    drawEllipse(586, 74, 18, 14, '#d0b868', 0);
-    // Persian area
-    drawEllipse(605, 68, 14, 10, '#c8b860', 0);
-
-    // ── JAPAN ─────────────────────────────────────────────────────────────────
-    drawEllipse(808, 54, 4, 16, '#6a8e3e', 0.15);
-
-    // ── INDONESIA / PHILIPPINES ───────────────────────────────────────────────
-    drawEllipse(738, 118, 12, 4, '#5a8a30', 0.2); // Sumatra
-    drawEllipse(752, 124, 18, 5, '#5a8830', 0.1); // Borneo
-    drawEllipse(772, 122, 10, 4, '#5a8a30', 0);   // Sulawesi
-    drawEllipse(768, 132, 5, 14, '#5a8830', 0.2);  // New Guinea (west)
-    // Philippines
-    drawEllipse(785, 86, 4, 10, '#5a8a30', 0.2);
-    drawEllipse(790, 98, 3, 8, '#5a8a30', 0.1);
-
-    // ── AUSTRALIA ─────────────────────────────────────────────────────────────
-    const australia = [
-      [712, 128], [728, 122], [748, 120], [768, 124], [782, 130],
-      [788, 140], [784, 150], [776, 158], [762, 164], [746, 166],
-      [730, 162], [718, 156], [710, 148], [706, 138],
-    ];
-    drawWithCoastNoise(australia, '#c48840');
-    // Outback interior
-    drawEllipse(748, 142, 32, 18, '#c89848', 0);
-    // Eastern ranges
-    drawEllipse(780, 140, 8, 28, '#a87838', 0.1);
-
-    // ── NEW ZEALAND ───────────────────────────────────────────────────────────
-    drawEllipse(815, 176, 4, 14, '#5a8838', 0.2);
-    drawEllipse(818, 184, 3, 8, '#5a8838', 0.15);
-
-    // ── ANTARCTICA ────────────────────────────────────────────────────────────
+    // Antarctica
     ctx.fillStyle = '#f0f4f8';
-    ctx.fillRect(0, h - 16, w, 16);
-    for (let x = 0; x < w; x += 3) {
-      const iceH = 12 + Math.sin(x * 0.025) * 8 + Math.sin(x * 0.06) * 5 + Math.sin(x * 0.12) * 3;
-      ctx.fillStyle = 'rgba(238,242,248,0.8)';
-      ctx.fillRect(x, h - iceH, 2, iceH);
+    ctx.fillRect(0, h - 18, w, 18);
+    // Ice detail
+    for (let x = 0; x < w; x += 4) {
+      const iceH = 14 + Math.sin(x * 0.03) * 6 + Math.sin(x * 0.07) * 4;
+      ctx.fillStyle = 'rgba(240,245,250,0.7)';
+      ctx.fillRect(x, h - iceH, 3, iceH);
     }
 
-    // ── ARCTIC ────────────────────────────────────────────────────────────────
-    ctx.fillStyle = '#f0f4f6';
-    ctx.fillRect(0, 0, w, 8);
+    // Arctic ice
+    ctx.fillStyle = '#f2f6fa';
+    ctx.fillRect(0, 0, w, 10);
     for (let x = 0; x < w; x += 3) {
-      const iceH = 5 + Math.sin(x * 0.04) * 5 + Math.sin(x * 0.09) * 3;
-      ctx.fillStyle = 'rgba(238,242,246,0.7)';
+      const iceH = 6 + Math.sin(x * 0.05) * 5;
+      ctx.fillStyle = 'rgba(240,245,250,0.6)';
       ctx.fillRect(x, 0, 2, iceH);
     }
-    // Canadian Arctic archipelago
-    drawEllipse(140, 14, 20, 6, '#e8ecf2', 0);
-    drawEllipse(170, 10, 12, 4, '#e8ecf2', 0);
-    // Svalbard
-    drawEllipse(500, 10, 6, 3, '#e8ecf2', 0);
 
-    // ── ISLANDS ───────────────────────────────────────────────────────────────
-    // Caribbean
-    drawEllipse(218, 112, 8, 4, '#6a9038', 0.2);
-    drawEllipse(224, 108, 5, 3, '#6a9038', 0.1);
-    // Sri Lanka
-    drawEllipse(676, 108, 3, 5, '#4a8028', 0);
-    // Taiwan
-    drawEllipse(792, 70, 3, 5, '#6a8e3e', 0);
-    // Hainan
-    drawEllipse(770, 78, 3, 3, '#6a8e3e', 0);
-    // Iceland
-    drawEllipse(430, 28, 6, 4, '#d8e0e0', 0);
-    // Falklands
-    drawEllipse(208, 208, 3, 3, '#8a8448', 0);
+    // Greenland
+    drawContinent([[170, 18], [195, 12], [210, 20], [200, 32], [178, 28]], '#f0f4f8');
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MOUNTAIN HIGHLIGHTS (brown/grey ridge lines)
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Rockies
-    for (let i = 0; i < 20; i++) {
-      const x = 100 + i * 5 + Math.sin(i * 0.6) * 4;
-      const y = 50 + i * 2.2;
-      ctx.fillStyle = 'rgba(140,120,90,0.25)';
-      ctx.beginPath(); ctx.arc(x, y, 3 + Math.random() * 3, 0, Math.PI * 2); ctx.fill();
-    }
-    // Andes
-    for (let i = 0; i < 30; i++) {
-      const x = 180 + Math.sin(i * 0.5) * 8;
-      const y = 130 + i * 2.5;
-      ctx.fillStyle = 'rgba(140,115,80,0.3)';
-      ctx.beginPath(); ctx.arc(x, y, 3 + Math.random() * 3, 0, Math.PI * 2); ctx.fill();
-    }
-    // Himalayas
-    for (let i = 0; i < 12; i++) {
-      const x = 645 + i * 3.5;
-      const y = 62 + Math.sin(i * 0.8) * 6;
-      ctx.fillStyle = 'rgba(150,125,90,0.35)';
-      ctx.beginPath(); ctx.arc(x, y, 3 + Math.random() * 3, 0, Math.PI * 2); ctx.fill();
-    }
-    // Alps
-    for (let i = 0; i < 6; i++) {
-      const x = 474 + i * 3;
-      const y = 60 + Math.sin(i * 0.8) * 3;
-      ctx.fillStyle = 'rgba(140,120,90,0.3)';
-      ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
-    }
+    // Japan / islands
+    ctx.fillStyle = '#6a9040';
+    ctx.beginPath(); ctx.ellipse(395, 50, 6, 3, 0.2, 0, Math.PI * 2); ctx.fill();
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // CLOUD LAYER — structured atmospheric wisps
-    // ═══════════════════════════════════════════════════════════════════════════
-    for (let i = 0; i < 150; i++) {
-      const cx = Math.random() * w;
-      const cy = Math.random() * h;
-      const latFrac = cy / h;
-
-      // Avoid dense cloud at equator and poles
-      const nearEquator = Math.abs(latFrac - 0.5) < 0.06;
-      const nearPoles = Math.abs(latFrac - 0.5) > 0.46;
-      if (nearEquator || nearPoles) { if (Math.random() > 0.3) continue; }
-
-      // Prefer mid-latitudes
-      const midLat = Math.abs(latFrac - 0.5) > 0.15 && Math.abs(latFrac - 0.5) < 0.44;
-      let alpha = midLat ? Math.random() * 0.25 + 0.06 : Math.random() * 0.15 + 0.03;
-
-      const rx = Math.random() * 28 + 5;
-      const ry = Math.random() * 5 + 1.5;
-      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+    // Cloud wisps
+    for (let i = 0; i < 200; i++) {
+      const cx = Math.random() * w, cy = Math.random() * h;
+      ctx.fillStyle = `rgba(255,255,255,${Math.random() * 0.25})`;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, Math.random() * Math.PI * 0.25, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, Math.random() * 25 + 4, Math.random() * 3 + 1, Math.random() * Math.PI, 0, Math.PI * 2);
       ctx.fill();
     }
 
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return { albedo: tex, canvas: c };
+    return tex;
   }
+
+  /** Mars — reddish surface with darker highlands, polar caps, craters */
 
   /** Mars — rust red dunes, polar ice cap gradient, canyon ridge details */
   _generateMarsTexture() {
@@ -1520,6 +1438,93 @@ export class SolarSystem {
     }
   }
 
+  // ── PIT real-texture loader ─────────────────────────────────────────────────
+
+  /**
+   * Asynchronously loads high-resolution photographic textures from PIT/
+   * and replaces the procedural textures on each planet/sun/moon.
+   * Falls back gracefully — procedural textures remain visible until loads complete.
+   */
+  _loadPITTextures() {
+    const loader = new THREE.TextureLoader();
+
+    // Map planet names to PIT filenames
+    const PIT_MAP = {
+      'Sun':     '8k_sun.jpg',
+      'Mercury': '8k_mercury.jpg',
+      'Venus':   '8k_venus_surface.jpg',
+      'Earth':   '8k_earth_daymap.jpg',
+      'Mars':    '8k_mars.jpg',
+      'Jupiter': '8k_jupiter.jpg',
+      'Saturn':  '8k_saturn.jpg',
+      'Uranus':  '2k_uranus.jpg',
+      'Neptune': '2k_neptune.jpg',
+    };
+
+    const loadTex = (path, callback) => {
+      loader.load(path, (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        callback(tex);
+      }, undefined, () => {
+        // Silently ignore load failures — procedural texture stays
+      });
+    };
+
+    // ── Sun ──────────────────────────────────────────────────────────────────
+    loadTex('PIT/8k_sun.jpg', (tex) => {
+      if (this.sunGroup && this.sunGroup.children[0]) {
+        this.sunGroup.children[0].material.map = tex;
+        this.sunGroup.children[0].material.needsUpdate = true;
+      }
+    });
+
+    // ── Planets ──────────────────────────────────────────────────────────────
+    for (const p of this.planets) {
+      const filename = PIT_MAP[p.name];
+      if (!filename) continue;
+
+      loadTex('PIT/' + filename, (tex) => {
+        p.mesh.material.map = tex;
+        // Clear the procedural normal map — it doesn't match the PIT albedo
+        p.mesh.material.normalMap = null;
+        p.mesh.material.needsUpdate = true;
+      });
+    }
+
+    // ── Saturn ring ──────────────────────────────────────────────────────────
+    const saturn = this.planets.find(p => p.name === 'Saturn');
+    if (saturn) {
+      loadTex('PIT/8k_saturn_ring_alpha.png', (tex) => {
+        saturn.group.children.forEach(child => {
+          if (child.isMesh && child.geometry.type === 'RingGeometry') {
+            child.material.map = tex;
+            child.material.transparent = true;
+            child.material.needsUpdate = true;
+          }
+        });
+      });
+    }
+
+    // ── Moon ─────────────────────────────────────────────────────────────────
+    if (this.moon && this.moon.mesh) {
+      loadTex('PIT/8k_moon.jpg', (tex) => {
+        this.moon.mesh.material.map = tex;
+        this.moon.mesh.material.needsUpdate = true;
+      });
+    }
+
+    // ── Milky Way skybox ─────────────────────────────────────────────────────
+    loadTex('PIT/8k_stars_milky_way.jpg', (tex) => {
+      // Set as equirectangular scene background via the group's parent scene
+      const scene = this.group.parent;
+      if (scene && scene.isScene) {
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        scene.background = tex;
+      }
+    });
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
   addTo(scene) {
@@ -1553,8 +1558,17 @@ export class SolarSystem {
         this._jupiterMesh.material.map.offset.x -= 1.0;
       }
     }
-    // Subtle sun pulsation
-    const pulse = 1 + Math.sin(performance.now() * 0.001) * 0.015;
+    // ── Dynamic solar flame animation ──────────────────────────────────────
+    if (this._flameLayers && this._flameLayers.length > 0) {
+      this._flameTime += dt;
+      for (const flame of this._flameLayers) {
+        if (flame.material.uniforms && flame.material.uniforms.uTime) {
+          flame.material.uniforms.uTime.value = this._flameTime;
+        }
+      }
+    }
+    // Subtle sun core pulsation (separate from flames)
+    const pulse = 1 + Math.sin(this._flameTime * 0.8) * 0.012;
     this.sunGroup.children[0].scale.setScalar(pulse);
   }
 
