@@ -86,8 +86,9 @@ export class RelativisticVoyagerApp {
     // Relativistic visual effects
     this.baseFov = 65;        // camera FOV at rest
     this._lastAberrationBeta = -1;        // cached beta for stellar aberration
-    this._lastCameraForward = new THREE.Vector3();  // cached camera forward direction
+    this._lastAberrationDir = new THREE.Vector3();  // cached velocity direction for aberration
     this._aberrationActive = false;       // whether aberration is currently applied
+    this._velocityForward = new THREE.Vector3(0, 0, -1); // ship velocity direction
 
     // Free-look state — toggle with P key, mouse to look around
     this.freeLookYaw = 0;          // horizontal angle offset from ship heading
@@ -493,6 +494,7 @@ export class RelativisticVoyagerApp {
       const forward = new THREE.Vector3(
         -Math.sin(this.shipHeading), 0, -Math.cos(this.shipHeading)
       );
+      this._velocityForward.copy(forward);  // cache for aberration (differs from camera when free-looking)
 
       // Forward movement
       if (this.currentSpeed > 0.0001) {
@@ -603,28 +605,30 @@ export class RelativisticVoyagerApp {
     // Stellar aberration + Doppler colour shift — first-person only.
     // Updates when beta changes OR camera direction changes (turning at max speed).
     if (this.state.viewPerspective === 'firstPerson') {
-      const camForward = new THREE.Vector3();
-      this.camera.getWorldDirection(camForward);
+      // Use ship VELOCITY direction (not camera look) — relativistic aberration
+      // depends on the observer's motion, not where they happen to be looking.
+      // Free-look changes the camera but not the velocity vector.
+      const velDir = this._velocityForward;
 
       const betaChanged = Math.abs(b - this._lastAberrationBeta) > 0.001;
-      const dirChanged = this._lastCameraForward.lengthSq() < 0.01
-        || this._lastCameraForward.dot(camForward) < 0.9995;
+      const dirChanged = this._lastAberrationDir.lengthSq() < 0.01
+        || this._lastAberrationDir.dot(velDir) < 0.9995;
 
       if (!this._aberrationActive || betaChanged || dirChanged) {
         if (b > 0.001) {
-          this.starField.applyAberration(b, camForward);
+          this.starField.applyAberration(b, velDir);
         } else {
           this.starField.resetAberration();
         }
         this._lastAberrationBeta = b;
-        this._lastCameraForward.copy(camForward);
+        this._lastAberrationDir.copy(velDir);
         this._aberrationActive = true;
       }
     } else if (this._aberrationActive) {
       this.starField.resetAberration();
       this._aberrationActive = false;
       this._lastAberrationBeta = -1;
-      this._lastCameraForward.set(0, 0, 0);
+      this._lastAberrationDir.set(0, 0, 0);
     }
 
     // ---- Animate solar system -------------------------------------------------
