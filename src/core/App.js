@@ -491,14 +491,33 @@ export class RelativisticVoyagerApp {
       if (this.keys.left)  this.shipHeading += this.turnRate * dt;
       if (this.keys.right) this.shipHeading -= this.turnRate * dt;
 
-      const forward = new THREE.Vector3(
-        -Math.sin(this.shipHeading), 0, -Math.cos(this.shipHeading)
-      );
-      this._velocityForward.copy(forward);  // cache for aberration (differs from camera when free-looking)
+      // Forward direction:
+      //   Third-person → ship heading (A/D turn the ship)
+      //   First-person  → crosshair / camera look direction (shipHeading + freeLook + pitch)
+      let forward;
+      if (this.state.viewPerspective === 'firstPerson') {
+        const totalYaw = this.shipHeading + this.freeLookYaw;
+        const cosPitch = Math.cos(this.freeLookPitch);
+        forward = new THREE.Vector3(
+          -Math.sin(totalYaw) * cosPitch,
+          Math.sin(this.freeLookPitch),
+          -Math.cos(totalYaw) * cosPitch
+        );
+      } else {
+        forward = new THREE.Vector3(
+          -Math.sin(this.shipHeading), 0, -Math.cos(this.shipHeading)
+        );
+      }
+      this._velocityForward.copy(forward);  // cache for aberration
 
       // Forward movement
       if (this.currentSpeed > 0.0001) {
         this.shipPosition.add(forward.clone().multiplyScalar(this.currentSpeed * dt));
+        // In first-person, align ship heading to where we're thrusting (crosshair direction)
+        if (this.state.viewPerspective === 'firstPerson') {
+          this.shipHeading += this.freeLookYaw;
+          this.freeLookYaw = 0;
+        }
       }
       // Reverse — also bleeds speed faster
       if (this.keys.backward) {

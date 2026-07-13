@@ -84,10 +84,42 @@ export class StarField {
     // Milky Way band — brighter and denser
     this._createMilkyWayVolume(Math.floor(count * 0.8), this.innerRadius, radius);
 
+    // Nebula overlay sphere — large inverted sphere with nebula texture
+    this._createNebulaOverlay();
+
     this.container = new THREE.Group();
     for (const layer of this.layers) {
       this.container.add(layer.points);
     }
+    if (this._nebulaMesh) this.container.add(this._nebulaMesh);
+  }
+
+  /** Create a large inverted sphere with nebula texture, blended over stars */
+  _createNebulaOverlay() {
+    const nebulaR = this.outerRadius * 0.88;
+    const geo = new THREE.SphereGeometry(nebulaR, 64, 32);
+
+    const loader = new THREE.TextureLoader();
+    loader.load('PIT/nebula-4k.webp',
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const mat = new THREE.MeshBasicMaterial({
+          map: tex,
+          side: THREE.BackSide,
+          transparent: true,
+          opacity: 0.45,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        this._nebulaMesh = new THREE.Mesh(geo, mat);
+        this._nebulaMesh.renderOrder = -1;
+        if (this.container) {
+          this.container.add(this._nebulaMesh);
+        }
+      },
+      undefined,
+      () => { /* nebula load failed — decorative only, silently skip */ }
+    );
   }
 
   /** Create a layer of stars distributed throughout the spherical volume */
@@ -313,5 +345,11 @@ export class StarField {
 
     // Very slow rotation of the entire star field for subtle parallax
     this.container.rotation.y += 0.00003;
+
+    // Nebula sphere drifts very slowly for gentle motion
+    if (this._nebulaMesh) {
+      this._nebulaMesh.rotation.y += 0.00001;
+      this._nebulaMesh.rotation.x += 0.000005;
+    }
   }
 }
