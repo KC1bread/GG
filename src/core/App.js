@@ -17,6 +17,7 @@ import { SolarSystem, PLANET_INFO } from '../visual/SolarSystem.js';
 import { addReferenceScene } from '../visual/SceneObjects.js';
 import { EngineAudio } from '../audio/EngineAudio.js';
 import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRatio } from '../physics/relativity.js';
+import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
 
 /**
  * RelativisticVoyagerApp — main application controller.
@@ -89,6 +90,7 @@ export class RelativisticVoyagerApp {
     this._lastAberrationDir = new THREE.Vector3();  // cached velocity direction for aberration
     this._aberrationActive = false;       // whether aberration is currently applied
     this._velocityForward = new THREE.Vector3(0, 0, -1); // ship velocity direction
+    this.postProcess = null;  // relativistic full-screen shader
 
     // Free-look state — toggle with P key, mouse to look around
     this.freeLookYaw = 0;          // horizontal angle offset from ship heading
@@ -140,6 +142,10 @@ export class RelativisticVoyagerApp {
     this.renderer.shadowMap.enabled = true;
     document.getElementById('app-root').appendChild(this.renderer.domElement);
     document.body.appendChild(VRButton.createButton(this.renderer));
+
+    // Relativistic post-process (full-screen aberration + Doppler + beaming)
+    this.postProcess = new RelativisticPostProcess();
+    this.postProcess.init(this.renderer, this.camera);
   }
 
   // ---- Scene objects ---------------------------------------------------------
@@ -433,6 +439,7 @@ export class RelativisticVoyagerApp {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
+      if (this.postProcess) this.postProcess.setSize(window.innerWidth, window.innerHeight);
       this.dualClock.resize();
     });
   }
@@ -614,19 +621,29 @@ export class RelativisticVoyagerApp {
       crosshair.classList.toggle('hidden', this.state.viewPerspective !== 'firstPerson');
     }
 
-    // Vignette overlay — darkens periphery at high β for tunnel sensation
+    // Determine whether post-process shader should be active
     const b = this.state.beta;
+    const usePostProcess = this.state.viewMode === 'observed'
+      && b > 0.001
+      && this.state.viewPerspective === 'firstPerson'
+      && this.postProcess;
+
+    // Transition tracking for smooth measured ↔ observed switching
+    if (this.postProcess) {
+      this.postProcess.setTransition(usePostProcess ? 1 : 0);
+      this.postProcess.updateTransition(dt);
+    }
+
+    // Vignette overlay — disable when post-process shader handles darkening
     const vignette = document.getElementById('tunnel-vignette');
     if (vignette) {
-      vignette.style.opacity = Math.min(0.92, b * 1.1);
+      vignette.style.opacity = usePostProcess ? '0' : Math.min(0.92, b * 1.1);
     }
 
     // Stellar aberration + Doppler colour shift — first-person only.
-    // Updates when beta changes OR camera direction changes (turning at max speed).
-    if (this.state.viewPerspective === 'firstPerson') {
-      // Use ship VELOCITY direction (not camera look) — relativistic aberration
-      // depends on the observer's motion, not where they happen to be looking.
-      // Free-look changes the camera but not the velocity vector.
+    // When post-process shader is active, skip CPU-side star aberration
+    // (the shader handles aberration + Doppler + beaming for the entire scene).
+    if (this.state.viewPerspective === 'firstPerson' && !usePostProcess) {
       const velDir = this._velocityForward;
 
       const betaChanged = Math.abs(b - this._lastAberrationBeta) > 0.001;
@@ -643,7 +660,7 @@ export class RelativisticVoyagerApp {
         this._lastAberrationDir.copy(velDir);
         this._aberrationActive = true;
       }
-    } else if (this._aberrationActive) {
+    } else if (this._aberrationActive && !usePostProcess) {
       this.starField.resetAberration();
       this._aberrationActive = false;
       this._lastAberrationBeta = -1;
@@ -693,6 +710,11 @@ export class RelativisticVoyagerApp {
     this.missionSystem.update();
     this.spacetimeDiagram.update();
 
-    this.renderer.render(this.scene, this.camera);
+    // ---- Final render — post-process shader or direct ------------------------
+    if (usePostProcess) {
+      this.postProcess.render(b, this.camera, this.scene, this.renderer, this._velocityForward);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 }
