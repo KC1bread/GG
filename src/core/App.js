@@ -81,6 +81,10 @@ export class RelativisticVoyagerApp {
     this.accelRate = 12;      // scene units / sec²
     this.decelRate = 16;      // scene units / sec²
 
+    // Planet-jump state machine — keys 1-8 warp to planets
+    this._jumpState = 'idle';        // 'idle' | 'accelerating' | 'cruising'
+    this._jumpTargetIndex = -1;
+
     // Engine audio — initialised on first user interaction
     this.engineAudio = new EngineAudio();
 
@@ -231,6 +235,14 @@ export class RelativisticVoyagerApp {
     // P key — toggle free-look mode
     if (key === 'p' || key === 'P') {
       if (pressed) this._toggleFreeLook();
+      return;
+    }
+
+    // Digit keys 1-8 — planet warp (first-person + observed only)
+    const digitKeys = ['1','2','3','4','5','6','7','8'];
+    const dIdx = digitKeys.indexOf(key);
+    if (dIdx !== -1 && pressed) {
+      this._handlePlanetJump(dIdx);
       return;
     }
 
@@ -454,6 +466,139 @@ export class RelativisticVoyagerApp {
     }
   }
 
+  // ==========================================================================
+  //  Planet Jump — keys 1-8 warp to planets (first-person + observed only)
+  // ==========================================================================
+
+  /**
+   * Initiate planet-jump sequence.  Only active in first-person observed mode.
+   * @param {number} planetIndex — 0-7 index into solarSystem.planets
+   */
+  _handlePlanetJump(planetIndex) {
+    if (this.state.viewPerspective !== 'firstPerson' || this.state.viewMode !== 'observed') {
+      return;
+    }
+    if (this._jumpState !== 'idle') return; // already jumping
+
+    this._jumpState = 'accelerating';
+    this._jumpTargetIndex = planetIndex;
+  }
+
+  /**
+   * Advance the jump state machine each frame.
+   *
+   * Phase 1 (accelerating): rapidly ramp beta and currentSpeed to max.
+   * Phase 2 (cruising):   fly toward the planet at max speed — the approach
+   *                        is fully visible so the player sees the planet
+   *                        grow and the relativistic effects at peak beta.
+   *                        On arrival the ship snaps the last ~2 units,
+   *                        faces the planet, and resets to idle.
+   * @param {number} dt — delta time in seconds
+   */
+  _updateJump(dt) {
+    if (this._jumpState === 'idle') return;
+
+    // ---- Cancel jump if conditions change mid-jump -------------------------
+    if (this.state.viewPerspective !== 'firstPerson' || this.state.viewMode !== 'observed') {
+      this._jumpState = 'idle';
+      this._jumpTargetIndex = -1;
+      return;
+    }
+
+    // ======================================================================
+    //  Phase 1 — Accelerating
+    // ======================================================================
+    if (this._jumpState === 'accelerating') {
+      // Rapidly ramp beta to 0.99
+      this.state.beta = Math.min(0.99, this.state.beta + 0.8 * dt);
+      this._syncBetaSlider();
+
+      // Accelerate currentSpeed much faster than normal
+      const targetSpeed = this.state.beta * this.maxSpeed;
+      if (this.currentSpeed < targetSpeed) {
+        this.currentSpeed += this.accelRate * 8 * dt;
+        if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
+      }
+
+      // Switch to cruising once near peak speed
+      if (this.currentSpeed >= this.maxSpeed * 0.95) {
+        this._jumpState = 'cruising';
+        // Lock free-look so the camera stays aimed at the planet
+        this.freeLookYaw = 0;
+        this.freeLookPitch = 0;
+      }
+      return;
+    }
+
+    // ======================================================================
+    //  Phase 2 — Cruising (visible max-speed flight toward planet)
+    // ======================================================================
+    if (this._jumpState === 'cruising') {
+      const planet = this.solarSystem.planets[this._jumpTargetIndex];
+      if (!planet) { this._jumpState = 'idle'; return; }
+
+      const planetPos = planet.group.position;
+      const pRadius = planet.def.radius * 100; // SCALE = 100
+
+      // Saturn's rings extend to r * 2.2 — land beyond the outer ring edge
+      let safeRadius = pRadius;
+      if (planet.def.hasRings) {
+        safeRadius = pRadius * 2.2;
+      }
+      const buffer = 15;
+      const targetDist = safeRadius + buffer;
+
+      // Direction from ship toward planet
+      const toPlanet = new THREE.Vector3().subVectors(planetPos, this.shipPosition);
+      const dist = toPlanet.length();
+
+      // --- Arrival: snap final ~2 units, face planet, reset ---------------
+      if (dist <= targetDist + 2) {
+        const dir = dist > 0.001 ? toPlanet.normalize() : new THREE.Vector3(0, 0, 1);
+        const targetPos = planetPos.clone().add(dir.clone().multiplyScalar(-targetDist));
+        targetPos.y = Math.max(0.5, targetPos.y);
+        this.shipPosition.copy(targetPos);
+
+        // Face exactly toward the planet centre
+        const lookDir = new THREE.Vector3().subVectors(planetPos, this.shipPosition).normalize();
+        this.shipHeading = Math.atan2(-lookDir.x, -lookDir.z);
+        this.freeLookYaw = 0;
+        this.freeLookPitch = 0;
+
+        // Snap camera instantly (bypass lerp)
+        const fpOffset = this.firstPersonOffset.clone();
+        fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
+        this._smoothCamPos.copy(this.shipPosition.clone().add(fpOffset));
+
+        // Reset flight state
+        this.currentSpeed = 0;
+        this.state.beta = 0;
+        this._syncBetaSlider();
+        this._jumpState = 'idle';
+        this._jumpTargetIndex = -1;
+        return;
+      }
+
+      // --- Cruise: fly toward planet at max speed -------------------------
+      this.state.beta = 0.99;
+      this._syncBetaSlider();
+      this.currentSpeed = this.state.beta * this.maxSpeed;
+
+      const moveDir = toPlanet.normalize();
+      this.shipPosition.add(moveDir.clone().multiplyScalar(this.currentSpeed * dt));
+
+      // Smoothly rotate ship heading to face the planet during approach
+      const planetHeading = Math.atan2(-moveDir.x, -moveDir.z);
+      let headingDiff = planetHeading - this.shipHeading;
+      while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
+      while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+      this.shipHeading += headingDiff * Math.min(1, 4 * dt);
+
+      // Update velocity direction for relativistic post-process shader
+      this._velocityForward.copy(moveDir);
+    }
+  }
+
   onStateChanged() {
     const computed = computeRelativityState(this.state);
     this.logger.log('state_snapshot', {
@@ -472,31 +617,37 @@ export class RelativisticVoyagerApp {
 
     // ---- Keyboard flight — smooth acceleration / deceleration ----------------
     if (!this.state.paused) {
-      // ---- Beta ramp via Shift / Ctrl -----------------------------------------
-      if (this.keys.shift) {
-        this.state.beta = Math.min(0.99, this.state.beta + this.betaRampRate * dt);
-        this._syncBetaSlider();
-      }
-      if (this.keys.ctrl) {
-        this.state.beta = Math.max(0, this.state.beta - this.betaRampRate * 1.4 * dt);
-        this._syncBetaSlider();
-      }
+      // ---- Planet-jump update (handles all movement during jump) ------------
+      this._updateJump(dt);
 
-      // Target speed: full when forward pressed, zero otherwise
-      const targetSpeed = this.keys.forward ? this.state.beta * this.maxSpeed : 0;
+      // ---- Normal flight: beta, speed, turning (disabled during jump) --------
+      if (this._jumpState === 'idle') {
+        // ---- Beta ramp via Shift / Ctrl ---------------------------------------
+        if (this.keys.shift) {
+          this.state.beta = Math.min(0.99, this.state.beta + this.betaRampRate * dt);
+          this._syncBetaSlider();
+        }
+        if (this.keys.ctrl) {
+          this.state.beta = Math.max(0, this.state.beta - this.betaRampRate * 1.4 * dt);
+          this._syncBetaSlider();
+        }
 
-      // Smooth ramp
-      if (this.currentSpeed < targetSpeed) {
-        this.currentSpeed += this.accelRate * dt;
-        if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
-      } else if (this.currentSpeed > targetSpeed) {
-        this.currentSpeed -= this.decelRate * dt;
-        if (this.currentSpeed < targetSpeed) this.currentSpeed = targetSpeed;
+        // Target speed: full when forward pressed, zero otherwise
+        const targetSpeed = this.keys.forward ? this.state.beta * this.maxSpeed : 0;
+
+        // Smooth ramp
+        if (this.currentSpeed < targetSpeed) {
+          this.currentSpeed += this.accelRate * dt;
+          if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
+        } else if (this.currentSpeed > targetSpeed) {
+          this.currentSpeed -= this.decelRate * dt;
+          if (this.currentSpeed < targetSpeed) this.currentSpeed = targetSpeed;
+        }
+        if (this.currentSpeed < 0.0005) this.currentSpeed = 0; // dead zone
+
+        if (this.keys.left)  this.shipHeading += this.turnRate * dt;
+        if (this.keys.right) this.shipHeading -= this.turnRate * dt;
       }
-      if (this.currentSpeed < 0.0005) this.currentSpeed = 0; // dead zone
-
-      if (this.keys.left)  this.shipHeading += this.turnRate * dt;
-      if (this.keys.right) this.shipHeading -= this.turnRate * dt;
 
       // Forward direction:
       //   Third-person → ship heading (A/D turn the ship)
@@ -517,8 +668,8 @@ export class RelativisticVoyagerApp {
       }
       this._velocityForward.copy(forward);  // cache for aberration
 
-      // Forward movement
-      if (this.currentSpeed > 0.0001) {
+      // Forward movement (disabled during jump — _updateJump handles it)
+      if (this._jumpState === 'idle' && this.currentSpeed > 0.0001) {
         this.shipPosition.add(forward.clone().multiplyScalar(this.currentSpeed * dt));
         // In first-person, align ship heading to where we're thrusting (crosshair direction)
         if (this.state.viewPerspective === 'firstPerson') {
@@ -526,41 +677,46 @@ export class RelativisticVoyagerApp {
           this.freeLookYaw = 0;
         }
       }
-      // Reverse — also bleeds speed faster
-      if (this.keys.backward) {
+      // Reverse — also bleeds speed faster (disabled during jump)
+      if (this._jumpState === 'idle' && this.keys.backward) {
         this.shipPosition.add(forward.clone().multiplyScalar(-this.currentSpeed * 0.6 * dt));
         this.currentSpeed = Math.max(0, this.currentSpeed - this.decelRate * 1.5 * dt);
       }
 
-      // ---- Vertical movement (Q / E) -------------------------------------------
-      if (this.keys.up)   this.shipPosition.y += this.verticalSpeed * dt;
-      if (this.keys.down) this.shipPosition.y -= this.verticalSpeed * dt;
+      // ---- Vertical movement (Q / E) — disabled during jump ------------------
+      if (this._jumpState === 'idle') {
+        if (this.keys.up)   this.shipPosition.y += this.verticalSpeed * dt;
+        if (this.keys.down) this.shipPosition.y -= this.verticalSpeed * dt;
+      }
       // Clamp Y so ship doesn't sink through the Sun
       this.shipPosition.y = Math.max(-115, Math.min(2000, this.shipPosition.y));
 
       // ---- Collision detection (solid planets + Sun) ---------------------------
-      const shipR = 2.5; // small buffer around ship
+      // Disabled during planet jump to allow passing through models
+      if (this._jumpState === 'idle') {
+        const shipR = 2.5; // small buffer around ship
 
-      // Sun collision (origin, radius = 1.2 × SCALE = 120)
-      const sunR = 120 + shipR;
-      const sunDist = this.shipPosition.length();
-      if (sunDist < sunR && sunDist > 0.001) {
-        this.shipPosition.normalize().multiplyScalar(sunR);
-        this.currentSpeed *= 0.2;
-      }
+        // Sun collision (origin, radius = 1.2 × SCALE = 120)
+        const sunR = 120 + shipR;
+        const sunDist = this.shipPosition.length();
+        if (sunDist < sunR && sunDist > 0.001) {
+          this.shipPosition.normalize().multiplyScalar(sunR);
+          this.currentSpeed *= 0.2;
+        }
 
-      // Planet collisions
-      for (const p of this.solarSystem.planets) {
-        const px = p.group.position.x, pz = p.group.position.z;
-        const pR = p.def.radius * 100 + shipR; // SCALE = 100
-        const dx = this.shipPosition.x - px;
-        const dz = this.shipPosition.z - pz;
-        const dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < pR && dist > 0.001) {
-          const nx = dx / dist, nz = dz / dist;
-          this.shipPosition.x = px + nx * pR;
-          this.shipPosition.z = pz + nz * pR;
-          this.currentSpeed *= 0.3;
+        // Planet collisions
+        for (const p of this.solarSystem.planets) {
+          const px = p.group.position.x, pz = p.group.position.z;
+          const pR = p.def.radius * 100 + shipR; // SCALE = 100
+          const dx = this.shipPosition.x - px;
+          const dz = this.shipPosition.z - pz;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < pR && dist > 0.001) {
+            const nx = dx / dist, nz = dz / dist;
+            this.shipPosition.x = px + nx * pR;
+            this.shipPosition.z = pz + nz * pR;
+            this.currentSpeed *= 0.3;
+          }
         }
       }
     }
