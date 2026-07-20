@@ -24,6 +24,15 @@ export class Spacecraft {
 
     this.group.scale.setScalar(1.2);
 
+    // Move all children into a terrellGroup so Terrell transforms compose
+    // independently of the group's position/heading/scale.
+    this.terrellGroup = new THREE.Group();
+    this.terrellGroup.name = 'terrellGroup';
+    while (this.group.children.length > 0) {
+      this.terrellGroup.add(this.group.children[0]);
+    }
+    this.group.add(this.terrellGroup);
+
     // Flame & animation state
     this._flameTime = 0;
     this._wasThrusting = false;
