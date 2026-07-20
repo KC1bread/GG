@@ -229,7 +229,6 @@ export class MeasurementRod {
       beta = 0,
       lengthRatio = 1,
       terrellScale = lengthRatio,
-      terrellAngle = Math.asin(beta),
       viewMode = 'measured',
       frame = 'earth',
       visible = true

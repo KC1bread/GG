@@ -130,11 +130,11 @@ export class MeasurementPreview {
       frame = 'earth'
     } = physicsState;
 
+    const viewEuler = new THREE.Euler(this.dragPitch, this.dragYaw, 0, 'YXZ');
     let terrellQuaternion = null;
     if (viewMode === 'observed' && frame !== 'ship' && beta > 0.0001) {
       // Camera in preview space: base position (0, 8, 12) rotated by drag
       const baseCameraPos = new THREE.Vector3(0, 8, 12);
-      const viewEuler = new THREE.Euler(this.dragPitch, this.dragYaw, 0, 'YXZ');
       const rotatedCameraPos = baseCameraPos.clone().applyEuler(viewEuler);
       // viewDir: from origin (where rod sits) toward camera
       const viewDir = rotatedCameraPos.clone().normalize();
@@ -152,7 +152,6 @@ export class MeasurementPreview {
     });
     this.perpendicularRod.update({ ...physicsState, visible: isVisible });
 
-    const viewEuler = new THREE.Euler(this.dragPitch, this.dragYaw, 0, 'YXZ');
     this.previewRoot.quaternion.setFromEuler(viewEuler);
 
     const targetX = THREE.MathUtils.clamp((shipPosition?.x ?? 0) * 0.0024, -0.36, 0.36);
