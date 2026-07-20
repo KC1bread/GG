@@ -8,6 +8,7 @@ import { ControlPanel } from '../ui/ControlPanel.js';
 import { MissionSystem } from '../ui/MissionSystem.js';
 import { ConceptPanel } from '../ui/ConceptPanel.js';
 import { QuizSystem } from '../ui/QuizSystem.js';
+import { MeasurementPreview } from '../ui/MeasurementPreview.js';
 import { StarField } from '../visual/StarField.js';
 import { Spacecraft } from '../visual/Spacecraft.js';
 import { CockpitInterior } from '../visual/CockpitInterior.js';
@@ -201,12 +202,59 @@ export class RelativisticVoyagerApp {
 
     this.spacetimeDiagram = new SpacetimeDiagram(this.state);
 
+    // ── 双测量尺 3D 预览 ──
+    this.measurementPreviewCanvas = document.getElementById('measurement-preview-canvas');
+    if (this.measurementPreviewCanvas) {
+      this.measurementPreview = new MeasurementPreview(this.measurementPreviewCanvas);
+    }
+    this.measurementResetBtn = document.getElementById('measurement-reset-btn');
+    if (this.measurementResetBtn) {
+      this.measurementResetBtn.addEventListener('click', () => {
+        this.measurementPreview?.resetView();
+        this.comparisonEarthPreview?.resetView();
+        this.comparisonShipPreview?.resetView();
+      });
+    }
+    this.measurementPanelEls = {
+      parallelLabel: document.getElementById('rod-panel-parallel-label'),
+      parallelBase: document.getElementById('rod-panel-parallel-base'),
+      parallelCurrent: document.getElementById('rod-panel-parallel-current'),
+      perpendicularLabel: document.getElementById('rod-panel-perpendicular-label'),
+      perpendicularBase: document.getElementById('rod-panel-perpendicular-base'),
+      perpendicularCurrent: document.getElementById('rod-panel-perpendicular-current')
+    };
+
+    // ── 并列对比面板（sideBySide 模式） ──
+    this.comparisonEarthCanvas = document.getElementById('comparison-earth-canvas');
+    this.comparisonShipCanvas  = document.getElementById('comparison-ship-canvas');
+    if (this.comparisonEarthCanvas && this.comparisonShipCanvas) {
+      this.comparisonEarthPreview = new MeasurementPreview(this.comparisonEarthCanvas);
+      this.comparisonShipPreview  = new MeasurementPreview(this.comparisonShipCanvas);
+    }
+    this.comparisonEls = {
+      parallelEarth: document.getElementById('comp-parallel-earth'),
+      perpEarth:     document.getElementById('comp-perp-earth'),
+      parallelShip:  document.getElementById('comp-parallel-ship'),
+      perpShip:      document.getElementById('comp-perp-ship'),
+    };
+
     // Draggable / minimizable / closable panels
     this.panelManager = new PanelManager();
     this.panelManager.init([
-      '#control-panel', '#hud-panel', '#mission-panel',
+      '#control-panel', '#hud-panel', '#measurement-panel', '#mission-panel',
       '#concept-panel', '#quiz-panel', '#spacetime-panel', '#log-panel'
     ]);
+
+    // Orbit speed slider
+    const orbitSlider = document.getElementById('orbit-speed-slider');
+    const orbitVal = document.getElementById('orbit-speed-val');
+    if (orbitSlider && orbitVal) {
+      orbitSlider.addEventListener('input', () => {
+        const v = parseFloat(orbitSlider.value);
+        this.solarSystem.orbitSpeedMultiplier = v;
+        orbitVal.textContent = v.toFixed(2) + '×';
+      });
+    }
 
     this.onStateChanged();
   }
@@ -453,6 +501,9 @@ export class RelativisticVoyagerApp {
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       if (this.postProcess) this.postProcess.setSize(window.innerWidth, window.innerHeight);
       this.dualClock.resize();
+      this.measurementPreview?.resize();
+      this.comparisonEarthPreview?.resize();
+      this.comparisonShipPreview?.resize();
     });
   }
 
@@ -605,8 +656,25 @@ export class RelativisticVoyagerApp {
       beta: computed.beta, gamma: computed.gamma,
       frame: this.state.frame, viewMode: this.state.viewMode
     });
+    this._updateMeasurementPanel(computed);
     this.hud.update();
     this.spacetimeDiagram.update();
+  }
+
+  _updateMeasurementPanel(relativityState) {
+    if (!this.measurementPanelEls) return;
+
+    const previewInfo = this.measurementPreview?.getInfo();
+    const parallelLength = previewInfo?.parallel?.currentLength
+      ?? 5 * (relativityState?.lengthRatio ?? 1);
+    const perpendicularLength = previewInfo?.perpendicular?.currentLength ?? 5;
+    const modeLabel = this.state.viewMode === 'measured' ? '测量模式' : '观察模式';
+    this.measurementPanelEls.parallelLabel.textContent = `平行于运动方向 · ${modeLabel}`;
+    this.measurementPanelEls.parallelBase.textContent = '5.00';
+    this.measurementPanelEls.parallelCurrent.textContent = parallelLength.toFixed(2);
+    this.measurementPanelEls.perpendicularLabel.textContent = '垂直于运动方向';
+    this.measurementPanelEls.perpendicularBase.textContent = '5.00';
+    this.measurementPanelEls.perpendicularCurrent.textContent = perpendicularLength.toFixed(2);
   }
 
   // ---- Main update loop ------------------------------------------------------
@@ -851,6 +919,49 @@ export class RelativisticVoyagerApp {
     } else {
       this.spacecraft.group.scale.setScalar(baseScale);
       this.spacecraft.group.rotation.x = 0;
+    }
+
+    // ── 双测量尺预览（右下角 3D 小窗） ──
+    const rodPhysicsState = {
+      beta: this.state.beta,
+      lengthRatio: ratio,
+      terrellScale: ratio,
+      terrellAngle: r.terrellAngle,
+      viewMode: this.state.viewMode,
+      frame: this.state.frame,
+      visible: true
+    };
+
+    this.measurementPreview?.update({
+      physicsState: rodPhysicsState,
+      shipPosition: this.shipPosition,
+      visible: true
+    });
+    this._updateMeasurementPanel(r);
+
+    // ── 单画布 / 双画布切换（sideBySide 模式） ──
+    const isSideBySide = this.state.frame === 'sideBySide';
+    const measPanel = document.getElementById('measurement-panel');
+    const measSingle = document.getElementById('measurement-single-view');
+    const measDual   = document.getElementById('measurement-dual-view');
+    if (measPanel)  measPanel.classList.toggle('dual', isSideBySide);
+    if (measSingle) measSingle.classList.toggle('hidden', isSideBySide);
+    if (measDual)   measDual.classList.toggle('hidden', !isSideBySide);
+
+    // ── 并列对比：双测量尺（懒加载） ──
+    if (isSideBySide) {
+      if (this.comparisonEarthPreview && this.comparisonShipPreview) {
+        const earthRodState = { ...rodPhysicsState, frame: 'earth' };
+        const shipRodState  = { ...rodPhysicsState, frame: 'ship' };
+        this.comparisonEarthPreview.update({ physicsState: earthRodState, shipPosition: this.shipPosition, visible: true });
+        this.comparisonShipPreview.update({ physicsState: shipRodState, shipPosition: this.shipPosition, visible: true });
+
+        const earthParallel = 5 * (lengthContractionRatio(this.state.beta));
+        if (this.comparisonEls.parallelEarth) this.comparisonEls.parallelEarth.textContent = earthParallel.toFixed(2);
+        if (this.comparisonEls.parallelShip)  this.comparisonEls.parallelShip.textContent  = '5.00';
+        if (this.comparisonEls.perpEarth)     this.comparisonEls.perpEarth.textContent     = '5.00';
+        if (this.comparisonEls.perpShip)      this.comparisonEls.perpShip.textContent      = '5.00';
+      }
     }
 
     // Cockpit interior — animate indicator lights

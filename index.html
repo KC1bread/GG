@@ -53,9 +53,61 @@
       </select>
     </label>
 
+    <label>
+      行星轨道速度
+      <input id="orbit-speed-slider" type="range" min="0" max="2" step="0.01" value="0.08" />
+      <span class="slider-val" id="orbit-speed-val">0.08×</span>
+    </label>
+
     <div class="button-row">
       <button id="pause-btn">暂停</button>
       <button id="reset-btn">重置</button>
+    </div>
+  </section>
+
+  <section id="measurement-panel" class="panel measurement-panel hidden">
+    <h2>双测量尺</h2>
+    <div class="measurement-panel-actions">
+      <button id="measurement-reset-btn">复位视角</button>
+    </div>
+    <!-- 单画布模式 (earth/ship) -->
+    <div id="measurement-single-view">
+      <div class="measurement-preview-wrap">
+        <canvas id="measurement-preview-canvas"></canvas>
+      </div>
+      <dl class="measurement-info">
+        <dt>平行尺</dt><dd id="rod-panel-parallel-label">沿运动方向</dd>
+        <dt>固有长度</dt><dd id="rod-panel-parallel-base">5.00</dd>
+        <dt>当前长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
+        <dt>垂直尺</dt><dd id="rod-panel-perpendicular-label">垂直于运动方向</dd>
+        <dt>固有长度</dt><dd id="rod-panel-perpendicular-base">5.00</dd>
+        <dt>当前长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
+      </dl>
+    </div>
+    <!-- 双画布并列模式 (sideBySide) -->
+    <div id="measurement-dual-view" class="hidden">
+      <div class="comparison-grid">
+        <div class="comparison-col">
+          <div class="comparison-label">🌍 地球参考系</div>
+          <div class="comparison-preview-wrap">
+            <canvas id="comparison-earth-canvas"></canvas>
+          </div>
+          <dl class="comparison-info">
+            <dt>平行尺当前长度</dt><dd id="comp-parallel-earth">5.00</dd>
+            <dt>垂直尺当前长度</dt><dd id="comp-perp-earth">5.00</dd>
+          </dl>
+        </div>
+        <div class="comparison-col">
+          <div class="comparison-label">🚀 飞船参考系</div>
+          <div class="comparison-preview-wrap">
+            <canvas id="comparison-ship-canvas"></canvas>
+          </div>
+          <dl class="comparison-info">
+            <dt>平行尺当前长度</dt><dd id="comp-parallel-ship">5.00</dd>
+            <dt>垂直尺当前长度</dt><dd id="comp-perp-ship">5.00</dd>
+          </dl>
+        </div>
+      </div>
     </div>
   </section>
 
