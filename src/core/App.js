@@ -18,6 +18,7 @@ import { SolarSystem, PLANET_INFO } from '../visual/SolarSystem.js';
 import { addReferenceScene } from '../visual/SceneObjects.js';
 import { EngineAudio } from '../audio/EngineAudio.js';
 import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRatio } from '../physics/relativity.js';
+import { terrellTransformMatrix, terrellAmplification } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
 
 /**
@@ -45,6 +46,7 @@ export class RelativisticVoyagerApp {
       beta: 0,
       frame: 'earth',
       viewMode: 'measured',
+      terrellMode: 'precise',   // NEW: 'lorentzOnly' | 'precise' | 'enhanced'
       viewPerspective: 'thirdPerson',
       paused: false,
       earthTime: 0,
@@ -255,6 +257,18 @@ export class RelativisticVoyagerApp {
         orbitVal.textContent = v.toFixed(2) + '×';
       });
     }
+
+    // ── Terrell mode selector ───────────────────────────────────────────
+    const terrellSelect = document.getElementById('terrell-mode-select');
+    const terrellLabel = document.getElementById('terrell-mode-label');
+    if (terrellSelect) {
+      terrellSelect.addEventListener('change', () => {
+        this.state.terrellMode = terrellSelect.value;
+      });
+    }
+    // Store references for visibility toggle
+    this._terrellSelect = terrellSelect;
+    this._terrellLabel = terrellLabel;
 
     this.onStateChanged();
   }
@@ -659,6 +673,14 @@ export class RelativisticVoyagerApp {
     this._updateMeasurementPanel(computed);
     this.hud.update();
     this.spacetimeDiagram.update();
+    this._updateTerrellVisibility();
+  }
+
+  _updateTerrellVisibility() {
+    if (!this._terrellSelect || !this._terrellLabel) return;
+    const visible = this.state.viewMode === 'observed';
+    this._terrellSelect.style.display = visible ? '' : 'none';
+    this._terrellLabel.style.display = visible ? '' : 'none';
   }
 
   _updateMeasurementPanel(relativityState) {
@@ -677,11 +699,83 @@ export class RelativisticVoyagerApp {
     this.measurementPanelEls.perpendicularCurrent.textContent = perpendicularLength.toFixed(2);
   }
 
+  // ---- Terrell transform application -----------------------------------------
+
+  /**
+   * Apply Penrose-Terrell transforms to all visible objects.
+   * Called every frame from update().
+   */
+  _applyTerrellToScene(beta) {
+    const mode = this.state.terrellMode;
+    const isEarthFrame = this.state.frame === 'earth';
+    const isObserved = this.state.viewMode === 'observed';
+    const effectiveMode = (isObserved && isEarthFrame) ? mode : 'lorentzOnly';
+
+    const velocityDir = new THREE.Vector3(0, 0, -1)
+      .applyQuaternion(this.spacecraft.group.quaternion)
+      .normalize();
+
+    // ── Planets ──────────────────────────────────────────────────────
+    if (this.solarSystem && this.solarSystem.planets) {
+      for (const planet of this.solarSystem.planets) {
+        const planetWorldPos = new THREE.Vector3();
+        planet.group.getWorldPosition(planetWorldPos);
+        const viewDir = this._smoothCamPos.clone().sub(planetWorldPos).normalize();
+
+        if (beta < 0.0001) {
+          // Reset: restore auto-update and identity matrix on all mesh children
+          planet.group.children.forEach(child => {
+            if (child.isMesh) {
+              child.matrix.identity();
+              child.matrixAutoUpdate = true;
+            }
+          });
+        } else {
+          const transform = terrellTransformMatrix(
+            beta, viewDir, velocityDir, effectiveMode
+          );
+          // Apply to all mesh children (main body, rings, atmosphere, ocean, clouds)
+          // Skips sprites (labels) automatically
+          planet.group.children.forEach(child => {
+            if (child.isMesh) {
+              child.matrix.copy(transform);
+              child.matrixAutoUpdate = false;
+            }
+          });
+        }
+      }
+    }
+
+    // ── Spacecraft (third-person, Earth frame) ────────────────────────
+    if (this.state.viewPerspective === 'thirdPerson' && isEarthFrame && beta >= 0.0001) {
+      const shipWorldPos = new THREE.Vector3();
+      this.spacecraft.group.getWorldPosition(shipWorldPos);
+      const viewDir = this._smoothCamPos.clone().sub(shipWorldPos).normalize();
+
+      const transform = terrellTransformMatrix(
+        beta, viewDir, velocityDir, effectiveMode
+      );
+
+      if (this.spacecraft.terrellGroup) {
+        this.spacecraft.terrellGroup.matrix.copy(transform);
+        this.spacecraft.terrellGroup.matrixAutoUpdate = false;
+      }
+    } else if (this.spacecraft.terrellGroup) {
+      // Reset to identity when not applicable or at zero speed
+      this.spacecraft.terrellGroup.matrix.identity();
+      this.spacecraft.terrellGroup.matrixAutoUpdate = true;
+    }
+  }
+
   // ---- Main update loop ------------------------------------------------------
 
   update() {
     const dt = Math.min(0.05, this.clock.getDelta());
     const r = computeRelativityState(this.state);
+    const ratio = lengthContractionRatio(this.state.beta);
+    // Effective Terrell mode — used by _applyTerrellToScene and rodPhysicsState
+    const effectiveMode = (this.state.viewMode === 'observed' && this.state.frame === 'earth')
+      ? this.state.terrellMode : 'lorentzOnly';
 
     // ---- Keyboard flight — smooth acceleration / deceleration ----------------
     if (!this.state.paused) {
@@ -896,6 +990,9 @@ export class RelativisticVoyagerApp {
       this.solarSystem.update(dt);
     }
 
+    // ── Penrose-Terrell transforms ────────────────────────────────────
+    this._applyTerrellToScene(r.beta);
+
     // ---- Visual modules -------------------------------------------------------
     this.starField.update(this.state.beta);
     // Vertical input for spacecraft pitch: +1 nose-up (Q), -1 nose-down (E)
@@ -904,31 +1001,17 @@ export class RelativisticVoyagerApp {
     if (this.keys.down) verticalInput -= 1;
     this.spacecraft.update(this.state.beta, this.keys.forward, verticalInput);
 
-    // ---- Spacecraft length contraction (Earth frame) ----------------------------
+    // ── Spacecraft base scale (applied to group, Terrell applied to terrellGroup) ──
     const baseScale = 0.12;
-    const ratio = lengthContractionRatio(this.state.beta);
-    if (this.state.frame === 'earth'
-        && this.state.beta > 0.01) {
-      if (this.state.viewMode === 'measured') {
-        this.spacecraft.group.scale.set(baseScale, baseScale, baseScale * ratio);
-        this.spacecraft.group.rotation.x = 0;
-      } else {
-        this.spacecraft.group.scale.set(baseScale, baseScale, baseScale * (ratio * 0.92 + 0.08));
-        this.spacecraft.group.rotation.x = this.state.beta * 0.3;
-      }
-    } else {
-      this.spacecraft.group.scale.setScalar(baseScale);
-      this.spacecraft.group.rotation.x = 0;
-    }
+    this.spacecraft.group.scale.setScalar(baseScale);
 
     // ── 双测量尺预览（右下角 3D 小窗） ──
     const rodPhysicsState = {
       beta: this.state.beta,
       lengthRatio: ratio,
-      terrellScale: ratio,
-      terrellAngle: r.terrellAngle,
       viewMode: this.state.viewMode,
       frame: this.state.frame,
+      terrellMode: effectiveMode,  // pass effective mode for rod Terrell computation
       visible: true
     };
 
