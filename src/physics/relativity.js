@@ -71,7 +71,6 @@ export function computeRelativityState(state) {
     shipTime,
     etaEarth,
     etaShip,
-    lengthRatio,
-    terrellAngle: Math.asin(beta)  // baseline: maximum rotation (alpha = 90 deg)
+    lengthRatio
   };
 }

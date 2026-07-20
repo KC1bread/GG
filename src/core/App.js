@@ -18,7 +18,7 @@ import { SolarSystem, PLANET_INFO } from '../visual/SolarSystem.js';
 import { addReferenceScene } from '../visual/SceneObjects.js';
 import { EngineAudio } from '../audio/EngineAudio.js';
 import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRatio } from '../physics/relativity.js';
-import { terrellTransformMatrix, terrellAmplification } from '../physics/terrell.js';
+import { terrellTransformMatrix } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
 
 /**
@@ -734,11 +734,13 @@ export class RelativisticVoyagerApp {
           const transform = terrellTransformMatrix(
             beta, viewDir, velocityDir, effectiveMode
           );
-          // Apply to all mesh children (main body, rings, atmosphere, ocean, clouds)
-          // Skips sprites (labels) automatically
+          // Compose Terrell transform with planet's own local matrix
+          // so self-rotation (SolarSystem.update's .rotation.y) still works
           planet.group.children.forEach(child => {
             if (child.isMesh) {
-              child.matrix.copy(transform);
+              child.updateMatrix();  // capture current position/rotation/scale
+              const local = child.matrix.clone();
+              child.matrix.multiplyMatrices(transform, local);
               child.matrixAutoUpdate = false;
             }
           });
