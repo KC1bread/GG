@@ -68,6 +68,22 @@ export const PLANET_INFO = {
 
 const SCALE = 100;
 
+// Base orbit speed: Earth completes one orbit in 2π / 0.0172 ≈ 365.25 seconds
+const BASE_ORBIT_SPEED = 2 * Math.PI / 365.25;  // ≈ 0.01720
+
+// Real orbital speeds relative to Earth (Earth = 1.0).
+// Derived from orbital periods: speed ∝ 1/period.
+const RELATIVE_SPEEDS = {
+  Mercury: 365.25 / 88,      // 4.152
+  Venus:   365.25 / 225,     // 1.623
+  Earth:   1.0,
+  Mars:    365.25 / 687,     // 0.532
+  Jupiter: 1 / 11.86,        // 0.0843
+  Saturn:  1 / 29.46,        // 0.0339
+  Uranus:  1 / 84.01,        // 0.0119
+  Neptune: 1 / 164.8         // 0.00607
+};
+
 export class SolarSystem {
   constructor() {
     this.group = new THREE.Group();
@@ -75,23 +91,17 @@ export class SolarSystem {
     this.orbits = [];
     this.labels = [];
     this.moon = null;        // Moon reference for animation
-
-    // Orbit speed — much slower default (was 0.3), adjustable via UI
-    this._orbitSpeedMultiplier = 0.08;
+    this._flameLayers = [];  // Dynamic flame shader meshes
+    this._flameTime = 0;     // Flame animation timer
 
     this._createSun();
     this._createPlanets();
     this._createMoon();
     this._createOrbits();
     this._createLabels();
-  }
 
-  /** Set orbit speed multiplier (0–2, default 0.08). 0 = frozen. */
-  set orbitSpeedMultiplier(v) {
-    this._orbitSpeedMultiplier = Math.max(0, Math.min(2, v));
-  }
-  get orbitSpeedMultiplier() {
-    return this._orbitSpeedMultiplier;
+    // Load high-res PIT textures asynchronously (replaces procedural when ready)
+    this._loadPITTextures();
   }
 
   // ── Sun ────────────────────────────────────────────────────────────────────
@@ -100,30 +110,62 @@ export class SolarSystem {
     const sunGroup = new THREE.Group();
     const R = 1.2 * SCALE;  // 120
 
-    // Main sphere — use a canvas texture for granular surface
+    // Main sphere — canvas texture for granular surface
     const sunTex = this._generateSunTexture();
     const sunGeo = new THREE.SphereGeometry(R, 64, 32);
     const sunMat = new THREE.MeshBasicMaterial({ map: sunTex });
     const sunCore = new THREE.Mesh(sunGeo, sunMat);
     sunGroup.add(sunCore);
 
-    // Inner glow
-    const glowGeo1 = new THREE.SphereGeometry(R * 1.12, 48, 24);
-    const glowMat1 = new THREE.MeshBasicMaterial({
-      color: 0xffcc44, transparent: true, opacity: 0.2, depthWrite: false
+    // ── Dynamic flame layers ─────────────────────────────────────────────────
+    // Layer 1: Chromosphere — dense, bright, close to surface, fast moving
+    const flameGeo1 = new THREE.SphereGeometry(R * 1.05, 64, 32);
+    const flameMat1 = this._createFlameMaterial({
+      baseColor: new THREE.Color(0xffdd55),
+      tipColor:  new THREE.Color(0xff7722),
+      displacementScale: R * 0.06,
+      noiseScale: 0.8,
+      speed: 0.16,
+      opacity: 0.78,
     });
-    sunGroup.add(new THREE.Mesh(glowGeo1, glowMat1));
+    const flame1 = new THREE.Mesh(flameGeo1, flameMat1);
+    flame1.renderOrder = 1;
+    sunGroup.add(flame1);
+    this._flameLayers.push(flame1);
 
-    // Outer glow
-    const glowGeo2 = new THREE.SphereGeometry(R * 1.35, 32, 16);
-    const glowMat2 = new THREE.MeshBasicMaterial({
-      color: 0xff9922, transparent: true, opacity: 0.08, depthWrite: false
+    // Layer 2: Mid corona — medium displacement, rich orange tones
+    const flameGeo2 = new THREE.SphereGeometry(R * 1.18, 48, 24);
+    const flameMat2 = this._createFlameMaterial({
+      baseColor: new THREE.Color(0xff9922),
+      tipColor:  new THREE.Color(0xcc4400),
+      displacementScale: R * 0.14,
+      noiseScale: 0.5,
+      speed: 0.11,
+      opacity: 0.5,
     });
-    sunGroup.add(new THREE.Mesh(glowGeo2, glowMat2));
+    const flame2 = new THREE.Mesh(flameGeo2, flameMat2);
+    flame2.renderOrder = 2;
+    sunGroup.add(flame2);
+    this._flameLayers.push(flame2);
 
-    // Corona sprites
-    for (let i = 0; i < 3; i++) {
-      const sprite = this._makeGlowSprite(0xffcc66, (3.0 + i * 1.2) * SCALE, 0.12 - i * 0.03);
+    // Layer 3: Outer corona — wispy, large sweeping prominences
+    const flameGeo3 = new THREE.SphereGeometry(R * 1.42, 32, 16);
+    const flameMat3 = this._createFlameMaterial({
+      baseColor: new THREE.Color(0xff6600),
+      tipColor:  new THREE.Color(0x881100),
+      displacementScale: R * 0.30,
+      noiseScale: 0.3,
+      speed: 0.06,
+      opacity: 0.22,
+    });
+    const flame3 = new THREE.Mesh(flameGeo3, flameMat3);
+    flame3.renderOrder = 3;
+    sunGroup.add(flame3);
+    this._flameLayers.push(flame3);
+
+    // ── Outer glow sprites — subtle ambient scattered light ──────────────────
+    for (let i = 0; i < 2; i++) {
+      const sprite = this._makeGlowSprite(0xff9944, (3.8 + i * 2.0) * SCALE, 0.07 - i * 0.025);
       sunGroup.add(sprite);
     }
 
@@ -135,48 +177,137 @@ export class SolarSystem {
   }
 
   _generateSunTexture() {
-    const w = 512, h = 256;
+    const w = 1024, h = 512;
     const canvas = document.createElement('canvas');
     canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d');
 
-    // Base gradient
-    const grad = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, w/2);
-    grad.addColorStop(0, '#fffbe6');
-    grad.addColorStop(0.3, '#ffe08a');
-    grad.addColorStop(0.6, '#ffb833');
-    grad.addColorStop(0.85, '#ff8800');
-    grad.addColorStop(1, '#e65500');
-    ctx.fillStyle = grad;
+    // ── Base: multi-stop radial gradient with limb darkening ──────────────────
+    const baseGrad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w / 2);
+    baseGrad.addColorStop(0,    '#fffde8');  // bright core
+    baseGrad.addColorStop(0.08, '#fff8c0');
+    baseGrad.addColorStop(0.2,  '#ffe898');
+    baseGrad.addColorStop(0.35, '#ffc840');
+    baseGrad.addColorStop(0.5,  '#ffaa20');
+    baseGrad.addColorStop(0.65, '#ff8810');
+    baseGrad.addColorStop(0.8,  '#ee6600');
+    baseGrad.addColorStop(0.92, '#cc4400');
+    baseGrad.addColorStop(1.0,  '#993300');  // dark limb
+    ctx.fillStyle = baseGrad;
     ctx.fillRect(0, 0, w, h);
 
-    // Granulation / sunspots
+    // ── Multi-octave granulation (photosphere convection cells) ──────────────
+    // Octave 1 — fine grain (~2000 tiny bright/dark cells)
+    for (let i = 0; i < 2000; i++) {
+      const x = Math.random() * w;
+      const y = Math.random() * h;
+      const r = Math.random() * 3 + 0.5;
+      const bright = Math.random() > 0.45;
+      const alpha = Math.random() * 0.15;
+      ctx.fillStyle = bright
+        ? `rgba(255,255,230,${alpha})`
+        : `rgba(220,160,30,${alpha})`;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Octave 2 — medium granulation cells (~400)
+    for (let i = 0; i < 400; i++) {
+      const x = Math.random() * w;
+      const y = Math.random() * h;
+      const r = Math.random() * 7 + 2;
+      const bright = Math.random() > 0.4;
+      const alpha = Math.random() * 0.18;
+      ctx.fillStyle = bright
+        ? `rgba(255,250,210,${alpha})`
+        : `rgba(200,130,30,${alpha})`;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Octave 3 — large supergranulation (~60 cells)
+    for (let i = 0; i < 60; i++) {
+      const x = Math.random() * w;
+      const y = Math.random() * h;
+      const r = Math.random() * 18 + 6;
+      const alpha = Math.random() * 0.1;
+      ctx.fillStyle = `rgba(255,245,200,${alpha})`;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ── Faculae (bright patches, often near sunspots) ────────────────────────
+    const faculaeSeeds = [];
+    for (let i = 0; i < 12; i++) {
+      const fx = Math.random() * w * 0.6 + w * 0.2;
+      const fy = Math.random() * h * 0.5 + h * 0.25;
+      faculaeSeeds.push({ x: fx, y: fy });
+      const fGrad = ctx.createRadialGradient(fx, fy, 0, fx, fy, Math.random() * 20 + 8);
+      fGrad.addColorStop(0, 'rgba(255,255,240,0.25)');
+      fGrad.addColorStop(0.5, 'rgba(255,250,220,0.1)');
+      fGrad.addColorStop(1, 'rgba(255,200,100,0)');
+      ctx.fillStyle = fGrad;
+      ctx.beginPath(); ctx.arc(fx, fy, 25, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ── Sunspots with umbra (dark core) + penumbra (gray outer ring) ─────────
+    const spots = [];
+    for (let i = 0; i < 15; i++) {
+      const sx = Math.random() * w * 0.65 + w * 0.175;
+      const sy = Math.random() * h * 0.55 + h * 0.225;
+      const sr = Math.random() * 16 + 5;
+      spots.push({ x: sx, y: sy, r: sr });
+
+      // Penumbra (outer — dark brown/gray ring)
+      const penGrad = ctx.createRadialGradient(sx, sy, sr * 0.55, sx, sy, sr * 1.15);
+      penGrad.addColorStop(0, 'rgba(100,50,15,0.55)');
+      penGrad.addColorStop(0.6, 'rgba(130,70,25,0.35)');
+      penGrad.addColorStop(1, 'rgba(180,120,60,0)');
+      ctx.fillStyle = penGrad;
+      ctx.beginPath(); ctx.arc(sx, sy, sr * 1.15, 0, Math.PI * 2); ctx.fill();
+
+      // Umbra (inner — nearly black core)
+      const umbGrad = ctx.createRadialGradient(sx, sy, 0, sx, sy, sr * 0.55);
+      umbGrad.addColorStop(0, 'rgba(30,10,2,0.8)');
+      umbGrad.addColorStop(0.7, 'rgba(60,25,5,0.5)');
+      umbGrad.addColorStop(1, 'rgba(100,50,15,0)');
+      ctx.fillStyle = umbGrad;
+      ctx.beginPath(); ctx.arc(sx, sy, sr * 0.55, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ── Sunspot group clusters — several spots close together ─────────────────
+    for (let g = 0; g < 4; g++) {
+      const gx = Math.random() * w * 0.5 + w * 0.25;
+      const gy = Math.random() * h * 0.4 + h * 0.3;
+      for (let s = 0; s < 5; s++) {
+        const sx = gx + (Math.random() - 0.5) * 30;
+        const sy = gy + (Math.random() - 0.5) * 20;
+        const sr = Math.random() * 6 + 2;
+
+        const pGrad = ctx.createRadialGradient(sx, sy, sr * 0.5, sx, sy, sr * 1.2);
+        pGrad.addColorStop(0, 'rgba(80,35,10,0.5)');
+        pGrad.addColorStop(0.5, 'rgba(120,60,25,0.3)');
+        pGrad.addColorStop(1, 'rgba(180,120,60,0)');
+        ctx.fillStyle = pGrad;
+        ctx.beginPath(); ctx.arc(sx, sy, sr * 1.2, 0, Math.PI * 2); ctx.fill();
+
+        ctx.fillStyle = 'rgba(35,12,3,0.7)';
+        ctx.beginPath(); ctx.arc(sx, sy, sr * 0.5, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+
+    // ── Chromospheric network — subtle bright web across surface ──────────────
     for (let i = 0; i < 300; i++) {
       const x = Math.random() * w;
       const y = Math.random() * h;
-      const r = Math.random() * 8 + 1;
-      const alpha = Math.random() * 0.25;
-      const bright = Math.random() > 0.5;
-      ctx.fillStyle = bright
-        ? `rgba(255,255,220,${alpha})`
-        : `rgba(200,100,0,${alpha})`;
+      ctx.strokeStyle = `rgba(255,250,220,${Math.random() * 0.06})`;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (Math.random() - 0.5) * 30, y + (Math.random() - 0.5) * 20);
+      ctx.stroke();
     }
 
-    // Dark sunspots
-    for (let i = 0; i < 8; i++) {
-      const x = Math.random() * w * 0.7 + w * 0.15;
-      const y = Math.random() * h * 0.6 + h * 0.2;
-      const r = Math.random() * 14 + 4;
-      ctx.fillStyle = `rgba(80,30,0,0.5)`;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = `rgba(40,10,0,0.6)`;
-      ctx.beginPath(); ctx.arc(x, y, r * 0.5, 0, Math.PI * 2); ctx.fill();
-    }
-
-    return new THREE.CanvasTexture(canvas);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
   }
 
   _makeGlowSprite(color, scale, opacity) {
@@ -199,26 +330,166 @@ export class SolarSystem {
     return sprite;
   }
 
+  /**
+   * Create a custom ShaderMaterial for dynamic solar flames.
+   * Uses multi-octave 3D noise to displace sphere vertices outward,
+   * producing organic flame-like corona layers around the Sun.
+   *
+   * @param {Object} opts
+   * @param {THREE.Color} opts.baseColor   - colour at surface (hot)
+   * @param {THREE.Color} opts.tipColor    - colour at flame tips (cooler)
+   * @param {number} opts.displacementScale - max vertex displacement in world units
+   * @param {number} opts.noiseScale       - spatial frequency of noise
+   * @param {number} opts.speed            - animation speed multiplier
+   * @param {number} opts.opacity          - base opacity
+   */
+  _createFlameMaterial(opts) {
+    const {
+      baseColor = new THREE.Color(0xff8830),
+      tipColor  = new THREE.Color(0xff4400),
+      displacementScale = 5.0,
+      noiseScale = 0.5,
+      speed = 0.1,
+      opacity = 0.7,
+    } = opts;
+
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTime:               { value: 0 },
+        uDisplacementScale:  { value: displacementScale },
+        uNoiseScale:         { value: noiseScale },
+        uSpeed:              { value: speed },
+        uBaseColor:          { value: baseColor },
+        uTipColor:           { value: tipColor },
+        uOpacity:            { value: opacity },
+      },
+
+      vertexShader: /* glsl */ `
+        varying float vDisplacement;
+        varying vec3  vWorldNormal;
+        varying vec3  vWorldPos;
+        varying vec3  vLocalPos;
+
+        uniform float uTime;
+        uniform float uDisplacementScale;
+        uniform float uNoiseScale;
+        uniform float uSpeed;
+
+        // ── 3D value noise ──────────────────────────────────────────────
+        float hash(vec3 p) {
+          float h = dot(p, vec3(127.1, 311.7, 74.7));
+          return fract(sin(h) * 43758.5453);
+        }
+
+        float noise3D(vec3 p) {
+          vec3 i = floor(p);
+          vec3 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);           // smoothstep
+          return mix(
+            mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x),
+                mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
+            mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x),
+                mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
+        }
+
+        // ── FBM (4 octaves) ────────────────────────────────────────────
+        float fbm(vec3 p) {
+          float sum = 0.0;
+          float amp = 1.0;
+          float freq = 1.0;
+          for (int i = 0; i < 4; i++) {
+            sum += amp * noise3D(p * freq);
+            amp *= 0.5;
+            freq *= 2.0;
+          }
+          return sum * 0.65;   // normalise to ~0–1
+        }
+
+        void main() {
+          vec3 noiseInput = position * uNoiseScale;
+
+          // Two independent noise channels for organic variation
+          float n1 = fbm(noiseInput + uTime * uSpeed);
+          float n2 = fbm(noiseInput * 1.7 + uTime * uSpeed * 0.7 + 5.73) * 0.55;
+          float noiseVal = n1 + n2;
+
+          // Reduce displacement at poles (real Sun has less coronal activity there)
+          float yNorm = abs(position.y) / length(position);
+          float latFactor = 1.0 - yNorm * 0.65;
+
+          float displacement = noiseVal * uDisplacementScale * latFactor;
+
+          // Allow tiny inward dips (10 % of outward) for filament-like detail
+          displacement -= uDisplacementScale * 0.06;
+
+          vec3 newPos = position + normal * displacement;
+
+          // Pass normalised displacement to fragment shader for colour ramp
+          vDisplacement = clamp(noiseVal * latFactor, 0.0, 1.0);
+
+          vec4 worldPos = modelMatrix * vec4(newPos, 1.0);
+          vWorldPos    = worldPos.xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vLocalPos    = position;
+
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(newPos, 1.0);
+        }
+      `,
+
+      fragmentShader: /* glsl */ `
+        varying float vDisplacement;
+        varying vec3  vWorldNormal;
+        varying vec3  vWorldPos;
+        varying vec3  vLocalPos;
+
+        uniform vec3  uBaseColor;
+        uniform vec3  uTipColor;
+        uniform float uOpacity;
+        uniform float uTime;
+
+        void main() {
+          // Colour ramp: surface (hot / bright) → tip (deeper orange-red)
+          float t = clamp(vDisplacement, 0.0, 1.0);
+          vec3 colour = mix(uBaseColor, uTipColor, t);
+
+          // Subtle pulse based on world position + time
+          float pulse = 0.88
+            + 0.12 * sin(vWorldPos.x * 0.4 + uTime * 2.3)
+                   * cos(vWorldPos.z * 0.4 + uTime * 1.9);
+
+          // Wispy tips: fade alpha as displacement increases
+          float alpha = uOpacity * (1.0 - t * 0.82) * pulse;
+
+          gl_FragColor = vec4(colour * pulse, alpha);
+        }
+      `,
+
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+  }
+
   // ── Planets ────────────────────────────────────────────────────────────────
 
   _createPlanets() {
     const planetDefs = [
-      { name: 'Mercury', radius: 0.08, orbit: 2.0, roughness: 0.7, metalness: 0.15, speed: 4.8,
-        texGen: 'mercury' },
-      { name: 'Venus',   radius: 0.16, orbit: 3.2, roughness: 0.25, metalness: 0.05, speed: 3.5,
-        texGen: 'venus' },
-      { name: 'Earth',   radius: 0.17, orbit: 4.6, roughness: 0.4, metalness: 0.05, speed: 2.9,
-        texGen: 'earth', hasAtmo: true },
-      { name: 'Mars',    radius: 0.10, orbit: 6.0, roughness: 0.65, metalness: 0.1, speed: 2.4,
-        texGen: 'mars' },
-      { name: 'Jupiter', radius: 0.48, orbit: 8.5, roughness: 0.45, metalness: 0.05, speed: 1.3,
+      { name: 'Mercury', radius: 0.08, orbit: 2.0, roughness: 0.7, metalness: 0.15,
+        texGen: 'mercury', normalStrength: 1.2 },
+      { name: 'Venus',   radius: 0.16, orbit: 3.2, roughness: 0.25, metalness: 0.05,
+        texGen: 'venus', normalStrength: 0.3 },
+      { name: 'Earth',   radius: 0.17, orbit: 4.6, roughness: 0.4, metalness: 0.05,
+        texGen: 'earth', hasAtmo: true, normalStrength: 0.4 },
+      { name: 'Mars',    radius: 0.10, orbit: 6.0, roughness: 0.65, metalness: 0.1,
+        texGen: 'mars', normalStrength: 1.0 },
+      { name: 'Jupiter', radius: 0.48, orbit: 8.5, roughness: 0.45, metalness: 0.05,
         texGen: 'jupiter' },
-      { name: 'Saturn',  radius: 0.40, orbit: 11.0, roughness: 0.35, metalness: 0.05, speed: 0.95,
+      { name: 'Saturn',  radius: 0.40, orbit: 11.0, roughness: 0.35, metalness: 0.05,
         texGen: 'saturn', hasRings: true },
-      { name: 'Uranus',  radius: 0.26, orbit: 13.8, roughness: 0.25, metalness: 0.05, speed: 0.68,
+      { name: 'Uranus',  radius: 0.26, orbit: 13.8, roughness: 0.25, metalness: 0.05,
         texGen: 'uranus', tilt: Math.PI / 2 * 0.85 },
-      { name: 'Neptune', radius: 0.25, orbit: 16.2, roughness: 0.25, metalness: 0.05, speed: 0.55,
-        texGen: 'neptune' }
+      { name: 'Neptune', radius: 0.25, orbit: 16.2, roughness: 0.25, metalness: 0.05,
+        texGen: 'neptune', normalStrength: 0.4 }
     ];
 
     for (const def of planetDefs) {
@@ -228,15 +499,31 @@ export class SolarSystem {
       const r = def.radius * SCALE;
       const orbitR = def.orbit * SCALE;
 
-      // Generate realistic texture
-      const texFn = this['_generate' + def.texGen.charAt(0).toUpperCase() + def.texGen.slice(1) + 'Texture'];
-      const map = typeof texFn === 'function' ? texFn.call(this) : null;
+      // Map texGen name to generator method
+      const texGenMap = {
+        mercury: '_generateMercuryTexture', venus: '_generateVenusTexture',
+        earth: '_generateEarthTexture', mars: '_generateMarsTexture',
+        jupiter: '_generateJupiterTexture', saturn: '_generateSaturnTexture',
+        uranus: '_generateUranusTexture', neptune: '_generateNeptuneTexture'
+      };
+      const texFnName = texGenMap[def.texGen];
+      const texFn = texFnName ? this[texFnName] : null;
+      // Generate realistic texture (returns CanvasTexture or {albedo, canvas})
+      const texResult = typeof texFn === 'function' ? texFn.call(this) : null;
+      const map = texResult && texResult.albedo ? texResult.albedo : texResult;
+      const srcCanvas = texResult && texResult.canvas ? texResult.canvas : null;
 
       const mat = new THREE.MeshStandardMaterial({
         map: map,
         roughness: def.roughness,
         metalness: def.metalness
       });
+
+      // Generate normal map from albedo canvas for rocky planets
+      if (srcCanvas && def.normalStrength) {
+        mat.normalMap = this._generateNormalMap(srcCanvas, def.normalStrength);
+        mat.normalScale = new THREE.Vector2(def.normalStrength * 0.6, def.normalStrength * 0.6);
+      }
 
       const geo = new THREE.SphereGeometry(r, 64, 32);
       const mesh = new THREE.Mesh(geo, mat);
@@ -247,9 +534,29 @@ export class SolarSystem {
       if (def.hasAtmo) {
         const atmoGeo = new THREE.SphereGeometry(r * 1.08, 48, 24);
         const atmoMat = new THREE.MeshBasicMaterial({
-          color: 0x88bbff, transparent: true, opacity: 0.1, depthWrite: false
+          color: 0x88bbff, transparent: true, opacity: 0.12, depthWrite: false
         });
         planetGroup.add(new THREE.Mesh(atmoGeo, atmoMat));
+
+        // Separate ocean mesh — slightly smaller, high specular for water highlights
+        const oceanGeo = new THREE.SphereGeometry(r * 1.005, 48, 24);
+        const oceanMat = new THREE.MeshStandardMaterial({
+          color: 0x2255aa, roughness: 0.08, metalness: 0.15, transparent: true,
+          opacity: 0.55, depthWrite: false
+        });
+        this._earthOceanMesh = new THREE.Mesh(oceanGeo, oceanMat);
+        planetGroup.add(this._earthOceanMesh);
+      }
+
+      // Venus cloud shell — thick sulfuric haze as separate animated mesh
+      if (def.name === 'Venus') {
+        const cloudGeo = new THREE.SphereGeometry(r * 1.06, 48, 24);
+        const cloudTex = this._generateVenusCloudTexture();
+        const cloudMat = new THREE.MeshBasicMaterial({
+          map: cloudTex, transparent: true, opacity: 0.55, depthWrite: false
+        });
+        this._venusCloudMesh = new THREE.Mesh(cloudGeo, cloudMat);
+        planetGroup.add(this._venusCloudMesh);
       }
 
       // Saturn's rings
@@ -290,126 +597,197 @@ export class SolarSystem {
       this.group.add(planetGroup);
       this.planets.push({
         group: planetGroup, mesh,
-        orbitRadius: orbitR, speed: def.speed,
+        orbitRadius: orbitR, speed: RELATIVE_SPEEDS[def.name],
         angle: startAngle, name: def.name, def
       });
+
+      // Store references for animation
+      if (def.name === 'Jupiter') this._jupiterMesh = mesh;
+      if (def.name === 'Earth' && this._earthOceanMesh) {
+        // earthOceanMesh already added to planetGroup above
+      }
     }
   }
 
   // ── Procedural textures (realistic) ────────────────────────────────────────
 
-  /** Mercury — grey, heavily cratered surface with maria */
+  /** Mercury — grey desaturated basalt, dense small craters, sharp shadows */
   _generateMercuryTexture() {
-    const w = 512, h = 256;
+    const w = 1024, h = 512;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
 
-    // Base grey
+    // Base desaturated grey basalt
     const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, '#b8b5ae'); grad.addColorStop(0.3, '#a8a59e');
-    grad.addColorStop(0.5, '#bab7b0'); grad.addColorStop(0.7, '#a09d96');
+    grad.addColorStop(0, '#b5b2ab'); grad.addColorStop(0.3, '#a8a59e');
+    grad.addColorStop(0.5, '#b8b5ae'); grad.addColorStop(0.7, '#a09d96');
     grad.addColorStop(1, '#b0ada6');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
-    // Maria (darker patches)
-    for (let i = 0; i < 12; i++) {
+    // Maria (darker basaltic patches) — more numerous
+    for (let i = 0; i < 20; i++) {
       const x = Math.random() * w, y = Math.random() * h;
-      const rx = Math.random() * 70 + 25, ry = Math.random() * 40 + 15;
-      ctx.fillStyle = `rgba(100,98,92,0.3)`;
+      const rx = Math.random() * 100 + 35, ry = Math.random() * 55 + 20;
+      ctx.fillStyle = `rgba(105,102,96,0.25)`;
       ctx.beginPath(); ctx.ellipse(x, y, rx, ry, Math.random() * Math.PI, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Craters
-    for (let i = 0; i < 200; i++) {
+    // Dense small craters — ~450, with rim highlights and inner shadows
+    for (let i = 0; i < 450; i++) {
       const x = Math.random() * w, y = Math.random() * h;
-      const r = Math.random() * 8 + 1;
-      const bright = Math.random() > 0.4;
-      ctx.strokeStyle = bright ? 'rgba(210,205,195,0.7)' : 'rgba(140,135,125,0.6)';
-      ctx.lineWidth = Math.random() * 1.5 + 0.3;
+      const r = Math.random() * 7 + 1.5;
+      // Bright rim (sunlit side)
+      ctx.strokeStyle = 'rgba(215,210,200,0.75)';
+      ctx.lineWidth = Math.random() * 1.2 + 0.4;
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
-      // Inner shadow
-      ctx.fillStyle = bright ? 'rgba(190,185,175,0.3)' : 'rgba(120,115,105,0.25)';
-      ctx.beginPath(); ctx.arc(x - r*0.15, y - r*0.15, r * 0.7, 0, Math.PI * 2); ctx.fill();
+      // Shadow inside (dark side of rim)
+      ctx.fillStyle = 'rgba(130,125,115,0.35)';
+      ctx.beginPath(); ctx.arc(x - r * 0.12, y - r * 0.12, r * 0.72, 0, Math.PI * 2); ctx.fill();
     }
 
-    // Large prominent craters
-    for (let i = 0; i < 15; i++) {
+    // Large prominent craters with central peaks
+    for (let i = 0; i < 20; i++) {
       const x = Math.random() * w, y = Math.random() * h;
-      const r = Math.random() * 18 + 6;
-      ctx.strokeStyle = 'rgba(180,175,165,0.8)';
-      ctx.lineWidth = 2;
+      const r = Math.random() * 22 + 8;
+      // Outer rim
+      ctx.strokeStyle = 'rgba(200,195,185,0.85)';
+      ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = 'rgba(170,165,155,0.3)';
-      ctx.beginPath(); ctx.arc(x, y, r * 0.85, 0, Math.PI * 2); ctx.fill();
+      // Inner floor
+      ctx.fillStyle = 'rgba(175,170,160,0.3)';
+      ctx.beginPath(); ctx.arc(x, y, r * 0.82, 0, Math.PI * 2); ctx.fill();
       // Central peak
-      if (Math.random() > 0.5) {
-        ctx.fillStyle = 'rgba(200,195,185,0.4)';
-        ctx.beginPath(); ctx.arc(x, y, r * 0.2, 0, Math.PI * 2); ctx.fill();
+      if (Math.random() > 0.4) {
+        ctx.fillStyle = 'rgba(210,205,195,0.45)';
+        ctx.beginPath(); ctx.arc(x + r * 0.05, y + r * 0.03, r * 0.22, 0, Math.PI * 2); ctx.fill();
+      }
+      // Ray system for some craters
+      if (Math.random() > 0.6) {
+        for (let j = 0; j < 8; j++) {
+          const angle = (j / 8) * Math.PI * 2 + Math.random() * 0.3;
+          const rayLen = r * (2 + Math.random() * 3);
+          ctx.strokeStyle = 'rgba(220,215,205,0.2)';
+          ctx.lineWidth = Math.random() * 2 + 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(angle) * rayLen, y + Math.sin(angle) * rayLen);
+          ctx.stroke();
+        }
       }
     }
 
-    const tex = new THREE.CanvasTexture(c);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
-  }
-
-  /** Venus — yellowish cloudy with subtle swirl patterns */
-  _generateVenusTexture() {
-    const w = 512, h = 256;
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    const ctx = c.getContext('2d');
-
-    // Base gradient
-    const grad = ctx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0, '#f0e0c0'); grad.addColorStop(0.2, '#e8d5a3');
-    grad.addColorStop(0.5, '#f2e0b8'); grad.addColorStop(0.8, '#e5d0a0');
-    grad.addColorStop(1, '#ecd8b0');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-
-    // Cloud swirls using sine waves
-    for (let y = 0; y < h; y += 2) {
-      const alpha = 0.06 + Math.abs(Math.sin(y * 0.04)) * 0.08;
-      ctx.fillStyle = `rgba(255,240,210,${alpha})`;
-      ctx.fillRect(0, y, w, 1);
-    }
-
-    // Horizontal cloud bands
-    for (let i = 0; i < 30; i++) {
-      const y = Math.random() * h;
-      const height = Math.random() * 8 + 2;
-      const alpha = Math.random() * 0.15;
-      ctx.fillStyle = Math.random() > 0.5
-        ? `rgba(255,245,225,${alpha})`
-        : `rgba(200,180,140,${alpha})`;
-      ctx.fillRect(0, y, w, height);
-    }
-
-    // Swirl patterns
-    for (let i = 0; i < 40; i++) {
-      const cx = Math.random() * w, cy = Math.random() * h;
-      const r = Math.random() * 25 + 8;
-      ctx.strokeStyle = `rgba(255,245,220,0.12)`;
+    // Scarps (linear cliff features)
+    for (let i = 0; i < 5; i++) {
+      const sx = Math.random() * w * 0.6 + w * 0.2;
+      const sy = Math.random() * h * 0.5 + h * 0.25;
+      const scarpLen = Math.random() * 120 + 40;
+      const scarpAngle = Math.random() * Math.PI;
+      ctx.strokeStyle = 'rgba(140,135,125,0.35)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      for (let a = 0; a < Math.PI * 2; a += 0.1) {
-        const rr = r + Math.sin(a * 5) * r * 0.3;
-        const px = cx + Math.cos(a) * rr;
-        const py = cy + Math.sin(a) * rr * 0.6;
-        a === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      ctx.moveTo(sx, sy);
+      for (let t = 0; t < scarpLen; t += 8) {
+        ctx.lineTo(sx + Math.cos(scarpAngle) * t + Math.sin(t * 0.1) * 6,
+                   sy + Math.sin(scarpAngle) * t + Math.cos(t * 0.08) * 4);
       }
       ctx.stroke();
     }
 
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
+    return { albedo: tex, canvas: c };
   }
 
-  /** Earth — blue oceans, green/brown continents, white clouds, ice caps */
+  /** Venus — yellow-orange sulfuric haze with emissive lava cracks */
+  _generateVenusTexture() {
+    const w = 1024, h = 512;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+
+    // Base yellow-orange haze gradient
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, '#f2e2c4'); grad.addColorStop(0.2, '#e8d5a3');
+    grad.addColorStop(0.5, '#f4e4bc'); grad.addColorStop(0.8, '#e5d0a0');
+    grad.addColorStop(1, '#eedcb4');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // Sulfuric cloud bands — coherent sine-wave patterns
+    for (let y = 0; y < h; y += 1) {
+      const alpha = 0.03 + Math.abs(Math.sin(y * 0.035)) * 0.07 + Math.abs(Math.sin(y * 0.09 + 2.3)) * 0.04;
+      if (alpha > 0.04) {
+        ctx.fillStyle = `rgba(255,242,215,${alpha})`;
+        ctx.fillRect(0, y, w, 1);
+      }
+    }
+
+    // Cloud swirl cells
+    for (let i = 0; i < 50; i++) {
+      const cx = Math.random() * w, cy = Math.random() * h;
+      const r = Math.random() * 30 + 10;
+      ctx.strokeStyle = `rgba(255,245,222,0.1)`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let a = 0; a < Math.PI * 2; a += 0.08) {
+        const rr = r + Math.sin(a * 5.5) * r * 0.35;
+        const px = cx + Math.cos(a) * rr;
+        const py = cy + Math.sin(a) * rr * 0.5;
+        a === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    // Lava crack network — sparse branching emissive lines
+    const drawLavaBranch = (sx, sy, angle, length, depth) => {
+      if (depth <= 0 || length < 3) return;
+      ctx.strokeStyle = `rgba(255,120,30,${0.25 + depth * 0.12})`;
+      ctx.lineWidth = depth * 0.7 + 0.3;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      let cx = sx, cy = sy;
+      for (let t = 0; t < length; t += 4) {
+        const wobble = Math.sin(t * 0.15) * 4;
+        cx += Math.cos(angle) * 4 + Math.cos(angle + Math.PI / 2) * wobble * 0.1;
+        cy += Math.sin(angle) * 4 + Math.sin(angle + Math.PI / 2) * wobble * 0.1;
+        ctx.lineTo(cx, cy);
+      }
+      ctx.stroke();
+      // Branch
+      if (Math.random() > 0.4) {
+        drawLavaBranch(cx, cy, angle + (Math.random() - 0.5) * 1.2, length * 0.55, depth - 1);
+      }
+      if (Math.random() > 0.55) {
+        drawLavaBranch(cx - length * 0.3, cy - length * 0.3, angle - (Math.random() - 0.5) * 1.0, length * 0.45, depth - 1);
+      }
+    };
+
+    for (let i = 0; i < 12; i++) {
+      const sx = Math.random() * w * 0.7 + w * 0.15;
+      const sy = Math.random() * h * 0.6 + h * 0.2;
+      drawLavaBranch(sx, sy, Math.random() * Math.PI * 2, Math.random() * 40 + 15, 3);
+    }
+
+    // Bright lava glow spots at crack intersections
+    for (let i = 0; i < 25; i++) {
+      const x = Math.random() * w, y = Math.random() * h;
+      const r = Math.random() * 2.5 + 0.8;
+      const glow = ctx.createRadialGradient(x, y, 0, x, y, r);
+      glow.addColorStop(0, 'rgba(255,180,60,0.5)');
+      glow.addColorStop(0.5, 'rgba(255,120,30,0.2)');
+      glow.addColorStop(1, 'rgba(255,80,10,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(x, y, r * 2, 0, Math.PI * 2); ctx.fill();
+    }
+
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return { albedo: tex, canvas: c };
+  }
+
+  /** Earth — realistic continent shapes with interior terrain detail */
   _generateEarthTexture() {
     const w = 512, h = 256;
     const c = document.createElement('canvas');
@@ -534,8 +912,10 @@ export class SolarSystem {
   }
 
   /** Mars — reddish surface with darker highlands, polar caps, craters */
+
+  /** Mars — rust red dunes, polar ice cap gradient, canyon ridge details */
   _generateMarsTexture() {
-    const w = 512, h = 256;
+    const w = 1024, h = 512;
     const c = document.createElement('canvas');
     c.width = w; c.height = h;
     const ctx = c.getContext('2d');
@@ -600,9 +980,31 @@ export class SolarSystem {
     ctx.fillStyle = 'rgba(220,150,110,0.2)';
     ctx.beginPath(); ctx.arc(ox, oy, 8, 0, Math.PI * 2); ctx.fill();
 
+    // Valles Marineris — massive canyon system across the equator
+    const canyonY = h * 0.52;
+    ctx.strokeStyle = 'rgba(100,45,20,0.4)';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.08, canyonY);
+    for (let x = w * 0.08; x < w * 0.55; x += 6) {
+      const yOff = Math.sin(x * 0.012) * 8 + Math.sin(x * 0.035) * 5 + Math.sin(x * 0.08) * 3;
+      ctx.lineTo(x, canyonY + yOff);
+    }
+    ctx.stroke();
+    // Canyon detail — branching tributaries
+    ctx.strokeStyle = 'rgba(110,55,25,0.3)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 8; i++) {
+      const bx = w * 0.12 + i * w * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(bx, canyonY + Math.sin(bx * 0.012) * 8);
+      ctx.lineTo(bx + 15, canyonY + 25 + Math.random() * 10);
+      ctx.stroke();
+    }
+
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
+    return { albedo: tex, canvas: c };
   }
 
   /** Jupiter — detailed bands with Great Red Spot */
@@ -673,7 +1075,7 @@ export class SolarSystem {
 
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
+    return tex; // Jupiter: no normal map (gas giant)
   }
 
   /** Saturn — pale gold with subtle horizontal bands */
@@ -822,6 +1224,86 @@ export class SolarSystem {
 
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return { albedo: tex, canvas: c };
+  }
+
+  /** Venus cloud layer — thick sulfuric haze bands */
+  _generateVenusCloudTexture() {
+    const w = 512, h = 256;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0)'; ctx.fillRect(0, 0, w, h);
+
+    // Thick cloud bands
+    for (let y = 0; y < h; y += 2) {
+      const alpha = 0.15 + Math.abs(Math.sin(y * 0.03)) * 0.35 + Math.abs(Math.sin(y * 0.08 + 1.7)) * 0.2;
+      ctx.fillStyle = `rgba(255,245,215,${Math.min(0.7, alpha)})`;
+      ctx.fillRect(0, y, w, 2);
+    }
+    // Bright cloud swirls
+    for (let i = 0; i < 30; i++) {
+      const cx = Math.random() * w, cy = Math.random() * h;
+      ctx.fillStyle = `rgba(255,250,235,${Math.random() * 0.4 + 0.1})`;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, Math.random() * 40 + 10, Math.random() * 4 + 1, Math.random() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    return tex;
+  }
+
+  // ── Normal map generator (Sobel-based from albedo canvas) ───────────────────
+
+  /**
+   * Generate a tangent-space normal map from an albedo canvas.
+   * Uses luminance as height and Sobel operator for gradient.
+   * @param {HTMLCanvasElement} albedoCanvas — source albedo texture
+   * @param {number} strength — bump intensity multiplier (0.1–2.0)
+   * @returns {THREE.CanvasTexture}
+   */
+  _generateNormalMap(albedoCanvas, strength = 1.0) {
+    const w = albedoCanvas.width;
+    const h = albedoCanvas.height;
+    const srcCtx = albedoCanvas.getContext('2d');
+    const srcData = srcCtx.getImageData(0, 0, w, h);
+
+    const resultCanvas = document.createElement('canvas');
+    resultCanvas.width = w;
+    resultCanvas.height = h;
+    const dstCtx = resultCanvas.getContext('2d');
+    const dstData = dstCtx.createImageData(w, h);
+
+    const lum = (idx) => srcData.data[idx] * 0.299 + srcData.data[idx + 1] * 0.587 + srcData.data[idx + 2] * 0.114;
+
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const tl = lum(((y - 1) * w + (x - 1)) * 4);
+        const tc = lum(((y - 1) * w + x) * 4);
+        const tr = lum(((y - 1) * w + (x + 1)) * 4);
+        const ml = lum((y * w + (x - 1)) * 4);
+        const mr = lum((y * w + (x + 1)) * 4);
+        const bl = lum(((y + 1) * w + (x - 1)) * 4);
+        const bc = lum(((y + 1) * w + x) * 4);
+        const br = lum(((y + 1) * w + (x + 1)) * 4);
+
+        const gx = (-tl + tr - 2 * ml + 2 * mr - bl + br) * strength;
+        const gy = (-tl - 2 * tc - tr + bl + 2 * bc + br) * strength;
+        const nz = 1.0;
+        const len = Math.sqrt(gx * gx + gy * gy + nz * nz);
+
+        const idx = (y * w + x) * 4;
+        dstData.data[idx]     = ((gx / len) + 1) * 127.5;
+        dstData.data[idx + 1] = ((gy / len) + 1) * 127.5;
+        dstData.data[idx + 2] = ((nz / len) + 1) * 127.5;
+        dstData.data[idx + 3] = 255;
+      }
+    }
+
+    dstCtx.putImageData(dstData, 0, 0);
+    const tex = new THREE.CanvasTexture(resultCanvas);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     return tex;
   }
 
@@ -869,8 +1351,7 @@ export class SolarSystem {
       pivot: moonPivot,
       mesh: moonMesh,
       orbitRadius: moonOrbitR,
-      angle: Math.random() * Math.PI * 2,
-      speed: 13.0  // ~13 orbits per Earth year
+      angle: Math.random() * Math.PI * 2
     };
   }
 
@@ -957,6 +1438,93 @@ export class SolarSystem {
     }
   }
 
+  // ── PIT real-texture loader ─────────────────────────────────────────────────
+
+  /**
+   * Asynchronously loads high-resolution photographic textures from PIT/
+   * and replaces the procedural textures on each planet/sun/moon.
+   * Falls back gracefully — procedural textures remain visible until loads complete.
+   */
+  _loadPITTextures() {
+    const loader = new THREE.TextureLoader();
+
+    // Map planet names to PIT filenames
+    const PIT_MAP = {
+      'Sun':     '8k_sun.jpg',
+      'Mercury': '8k_mercury.jpg',
+      'Venus':   '8k_venus_surface.jpg',
+      'Earth':   '8k_earth_daymap.jpg',
+      'Mars':    '8k_mars.jpg',
+      'Jupiter': '8k_jupiter.jpg',
+      'Saturn':  '8k_saturn.jpg',
+      'Uranus':  '2k_uranus.jpg',
+      'Neptune': '2k_neptune.jpg',
+    };
+
+    const loadTex = (path, callback) => {
+      loader.load(path, (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        callback(tex);
+      }, undefined, () => {
+        // Silently ignore load failures — procedural texture stays
+      });
+    };
+
+    // ── Sun ──────────────────────────────────────────────────────────────────
+    loadTex('PIT/8k_sun.jpg', (tex) => {
+      if (this.sunGroup && this.sunGroup.children[0]) {
+        this.sunGroup.children[0].material.map = tex;
+        this.sunGroup.children[0].material.needsUpdate = true;
+      }
+    });
+
+    // ── Planets ──────────────────────────────────────────────────────────────
+    for (const p of this.planets) {
+      const filename = PIT_MAP[p.name];
+      if (!filename) continue;
+
+      loadTex('PIT/' + filename, (tex) => {
+        p.mesh.material.map = tex;
+        // Clear the procedural normal map — it doesn't match the PIT albedo
+        p.mesh.material.normalMap = null;
+        p.mesh.material.needsUpdate = true;
+      });
+    }
+
+    // ── Saturn ring ──────────────────────────────────────────────────────────
+    const saturn = this.planets.find(p => p.name === 'Saturn');
+    if (saturn) {
+      loadTex('PIT/8k_saturn_ring_alpha.png', (tex) => {
+        saturn.group.children.forEach(child => {
+          if (child.isMesh && child.geometry.type === 'RingGeometry') {
+            child.material.map = tex;
+            child.material.transparent = true;
+            child.material.needsUpdate = true;
+          }
+        });
+      });
+    }
+
+    // ── Moon ─────────────────────────────────────────────────────────────────
+    if (this.moon && this.moon.mesh) {
+      loadTex('PIT/8k_moon.jpg', (tex) => {
+        this.moon.mesh.material.map = tex;
+        this.moon.mesh.material.needsUpdate = true;
+      });
+    }
+
+    // ── Milky Way skybox ─────────────────────────────────────────────────────
+    loadTex('PIT/8k_stars_milky_way.jpg', (tex) => {
+      // Set as equirectangular scene background via the group's parent scene
+      const scene = this.group.parent;
+      if (scene && scene.isScene) {
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        scene.background = tex;
+      }
+    });
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
   addTo(scene) {
@@ -964,20 +1532,43 @@ export class SolarSystem {
   }
 
   update(dt) {
-    const spd = this._orbitSpeedMultiplier;
     for (const p of this.planets) {
-      p.angle += dt * p.speed * spd;
+      p.angle += dt * p.speed * BASE_ORBIT_SPEED;
       p.group.position.x = Math.cos(p.angle) * p.orbitRadius;
       p.group.position.z = Math.sin(p.angle) * p.orbitRadius;
-      p.mesh.rotation.y += dt * 0.5 * spd;
+      p.mesh.rotation.y += dt * 0.5 * BASE_ORBIT_SPEED;
     }
-    // Moon orbit
+    // Moon orbit — ~13 orbits per Earth year
     if (this.moon) {
-      this.moon.angle += dt * this.moon.speed * spd;
+      this.moon.angle += dt * 13.0 * BASE_ORBIT_SPEED;
       this.moon.pivot.rotation.y = this.moon.angle;
     }
-    // Subtle sun pulsation
-    const pulse = 1 + Math.sin(performance.now() * 0.001) * 0.015;
+    // Venus cloud shell rotation
+    if (this._venusCloudMesh) {
+      this._venusCloudMesh.rotation.y += dt * 0.04;
+    }
+    // Earth ocean slow rotation
+    if (this._earthOceanMesh) {
+      this._earthOceanMesh.rotation.y += dt * 0.015;
+    }
+    // Jupiter UV offset animation — bands scroll horizontally
+    if (this._jupiterMesh && this._jupiterMesh.material.map) {
+      this._jupiterMesh.material.map.offset.x += dt * 0.006;
+      if (this._jupiterMesh.material.map.offset.x > 1.0) {
+        this._jupiterMesh.material.map.offset.x -= 1.0;
+      }
+    }
+    // ── Dynamic solar flame animation ──────────────────────────────────────
+    if (this._flameLayers && this._flameLayers.length > 0) {
+      this._flameTime += dt;
+      for (const flame of this._flameLayers) {
+        if (flame.material.uniforms && flame.material.uniforms.uTime) {
+          flame.material.uniforms.uTime.value = this._flameTime;
+        }
+      }
+    }
+    // Subtle sun core pulsation (separate from flames)
+    const pulse = 1 + Math.sin(this._flameTime * 0.8) * 0.012;
     this.sunGroup.children[0].scale.setScalar(pulse);
   }
 

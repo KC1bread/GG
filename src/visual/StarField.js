@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { aberratedCosTheta, dopplerFactor } from '../physics/relativity.js';
 
 /**
  * StarField — a rich, bright star field filling the entire solar system volume.
@@ -10,7 +11,7 @@ import * as THREE from 'three';
  *  - Milky Way band of denser stars along a plane
  *  - Temperature-based star colors (blue-white → yellow → orange)
  *  - Subtle twinkling animation
- *  - Completely static — no relativistic aberration or Doppler shift
+ *  - Relativistic stellar aberration (first-person only, triggered by App.js)
  */
 
 // Random direction on unit sphere
@@ -83,10 +84,42 @@ export class StarField {
     // Milky Way band — brighter and denser
     this._createMilkyWayVolume(Math.floor(count * 0.8), this.innerRadius, radius);
 
+    // Nebula overlay sphere — large inverted sphere with nebula texture
+    this._createNebulaOverlay();
+
     this.container = new THREE.Group();
     for (const layer of this.layers) {
       this.container.add(layer.points);
     }
+    if (this._nebulaMesh) this.container.add(this._nebulaMesh);
+  }
+
+  /** Create a large inverted sphere with nebula texture, blended over stars */
+  _createNebulaOverlay() {
+    const nebulaR = this.outerRadius * 0.88;
+    const geo = new THREE.SphereGeometry(nebulaR, 64, 32);
+
+    const loader = new THREE.TextureLoader();
+    loader.load('PIT/nebula-4k.webp',
+      (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        const mat = new THREE.MeshBasicMaterial({
+          map: tex,
+          side: THREE.BackSide,
+          transparent: true,
+          opacity: 0.45,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        this._nebulaMesh = new THREE.Mesh(geo, mat);
+        this._nebulaMesh.renderOrder = -1;
+        if (this.container) {
+          this.container.add(this._nebulaMesh);
+        }
+      },
+      undefined,
+      () => { /* nebula load failed — decorative only, silently skip */ }
+    );
   }
 
   /** Create a layer of stars distributed throughout the spherical volume */
@@ -124,7 +157,9 @@ export class StarField {
 
     this.layers.push({
       points: new THREE.Points(geo, mat),
-      count
+      count,
+      originalPositions: new Float32Array(positions),  // cached for aberration
+      originalColors: new Float32Array(colors)         // cached for Doppler color shift
     });
   }
 
@@ -164,9 +199,126 @@ export class StarField {
     this.milkyWayPoints = new THREE.Points(geo, mat);
     this.layers.push({
       points: this.milkyWayPoints,
-      count
+      count,
+      originalPositions: new Float32Array(positions),
+      originalColors: new Float32Array(colors)
     });
   }
+
+  // -- Relativistic stellar aberration + Doppler colour shift -----------------
+
+  /**
+   * Apply relativistic aberration and Doppler colour shift to all stars.
+   *
+   * The aberration remaps the polar angle of each star relative to the camera's
+   * forward (velocity) direction. Stars ahead crowd together; stars behind spread
+   * apart. Simultaneously, the relativistic Doppler factor shifts star colours:
+   * blue-tinted ahead (blueshift), red-tinted behind (redshift).
+   *
+   * @param {number} beta — current speed fraction v/c
+   * @param {THREE.Vector3} cameraForward — unit vector in camera look direction
+   */
+  applyAberration(beta, cameraForward) {
+    const fx = cameraForward.x;
+    const fy = cameraForward.y;
+    const fz = cameraForward.z;
+
+    for (const layer of this.layers) {
+      const origPos = layer.originalPositions;
+      const origCol = layer.originalColors;
+      const geo = layer.points.geometry;
+      const posArr = geo.attributes.position.array;
+      const colArr = geo.attributes.color.array;
+      const count = layer.count;
+
+      for (let i = 0; i < count; i++) {
+        const px = origPos[i * 3];
+        const py = origPos[i * 3 + 1];
+        const pz = origPos[i * 3 + 2];
+
+        const r = Math.sqrt(px * px + py * py + pz * pz);
+        if (r < 0.001) continue;
+
+        // cosθ of star relative to camera forward direction
+        const cosTheta = (px * fx + py * fy + pz * fz) / r;
+        const cosThetaPrime = aberratedCosTheta(beta, cosTheta);
+        const sinThetaPrime = Math.sqrt(Math.max(0, 1 - cosThetaPrime * cosThetaPrime));
+
+        // ---- Reconstruct position: remap only the polar angle, keep azimuth ----
+        // Decompose original into parallel + perpendicular to forward
+        const parScale = cosTheta * r;
+        const parX = fx * parScale;
+        const parY = fy * parScale;
+        const parZ = fz * parScale;
+
+        const perpX = px - parX;
+        const perpY = py - parY;
+        const perpZ = pz - parZ;
+        const perpLen = Math.sqrt(perpX * perpX + perpY * perpY + perpZ * perpZ);
+
+        const newParScale = cosThetaPrime * r;
+        if (perpLen > 0.0001) {
+          const perpScale = (sinThetaPrime * r) / perpLen;
+          posArr[i * 3]     = fx * newParScale + perpX * perpScale;
+          posArr[i * 3 + 1] = fy * newParScale + perpY * perpScale;
+          posArr[i * 3 + 2] = fz * newParScale + perpZ * perpScale;
+        } else {
+          // Star exactly aligned with forward — no perpendicular component
+          posArr[i * 3]     = fx * newParScale;
+          posArr[i * 3 + 1] = fy * newParScale;
+          posArr[i * 3 + 2] = fz * newParScale;
+        }
+
+        // ---- Doppler colour shift -----------------------------------------------
+        const df = dopplerFactor(beta, cosTheta);
+        // Map via log-tanh for perceptual smoothness; [-1,+1] → blue/red tint
+        const shift = Math.tanh(Math.log(Math.max(0.08, Math.min(12, df))) * 0.55);
+        const strength = Math.abs(shift);
+
+        const br = origCol[i * 3];
+        const bg = origCol[i * 3 + 1];
+        const bb = origCol[i * 3 + 2];
+
+        if (strength < 0.015) {
+          // Negligible shift — keep original colour
+          colArr[i * 3]     = br;
+          colArr[i * 3 + 1] = bg;
+          colArr[i * 3 + 2] = bb;
+        } else if (shift > 0) {
+          // Blueshift: cool tint — push toward ice-blue
+          colArr[i * 3]     = br * (1 - strength * 0.45);
+          colArr[i * 3 + 1] = bg * (1 - strength * 0.18);
+          colArr[i * 3 + 2] = Math.min(1, bb + (1 - bb) * strength * 0.65);
+        } else {
+          // Redshift: warm tint — push toward orange-red
+          colArr[i * 3]     = Math.min(1, br + (1 - br) * strength * 0.55);
+          colArr[i * 3 + 1] = bg * (1 - strength * 0.40);
+          colArr[i * 3 + 2] = bb * (1 - strength * 0.60);
+        }
+      }
+
+      geo.attributes.position.needsUpdate = true;
+      geo.attributes.color.needsUpdate = true;
+    }
+  }
+
+  /**
+   * Reset star positions and colours to their original configuration (β=0).
+   */
+  resetAberration() {
+    for (const layer of this.layers) {
+      const origPos = layer.originalPositions;
+      const origCol = layer.originalColors;
+      const posArr = layer.points.geometry.attributes.position.array;
+      const colArr = layer.points.geometry.attributes.color.array;
+      posArr.set(origPos);
+      colArr.set(origCol);
+      layer.points.geometry.attributes.position.needsUpdate = true;
+      layer.points.geometry.attributes.color.needsUpdate = true;
+    }
+  }
+
+  // -- Scene attachment ------------------------------------------------------
 
   addTo(scene) {
     scene.add(this.container);
@@ -193,5 +345,11 @@ export class StarField {
 
     // Very slow rotation of the entire star field for subtle parallax
     this.container.rotation.y += 0.00003;
+
+    // Nebula sphere drifts very slowly for gentle motion
+    if (this._nebulaMesh) {
+      this._nebulaMesh.rotation.y += 0.00001;
+      this._nebulaMesh.rotation.x += 0.000005;
+    }
   }
 }

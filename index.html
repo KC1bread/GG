@@ -38,10 +38,27 @@
     </label>
 
     <label>
+      视角 Perspective
+      <select id="perspective-select">
+        <option value="thirdPerson">第三人称 Third-person</option>
+        <option value="firstPerson">第一人称 First-person</option>
+      </select>
+    </label>
+
+    <label>
       显示模式
       <select id="view-mode-select">
         <option value="measured">Measured：物理测量模式</option>
         <option value="observed">Observed：视觉观察模式</option>
+      </select>
+    </label>
+
+    <label id="terrell-mode-label">
+      Terrell 效果
+      <select id="terrell-mode-select">
+        <option value="lorentzOnly">纯 Lorentz 收缩</option>
+        <option value="precise" selected>Penrose-Terrell 精确</option>
+        <option value="enhanced">增强教学</option>
       </select>
     </label>
 
@@ -54,6 +71,52 @@
     <div class="button-row">
       <button id="pause-btn">暂停</button>
       <button id="reset-btn">重置</button>
+    </div>
+  </section>
+
+  <section id="measurement-panel" class="panel measurement-panel hidden">
+    <h2>双测量尺</h2>
+    <div class="measurement-panel-actions">
+      <button id="measurement-reset-btn">复位视角</button>
+    </div>
+    <!-- 单画布模式 (earth/ship) -->
+    <div id="measurement-single-view">
+      <div class="measurement-preview-wrap">
+        <canvas id="measurement-preview-canvas"></canvas>
+      </div>
+      <dl class="measurement-info">
+        <dt>平行尺</dt><dd id="rod-panel-parallel-label">沿运动方向</dd>
+        <dt>固有长度</dt><dd id="rod-panel-parallel-base">5.00</dd>
+        <dt>当前长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
+        <dt>垂直尺</dt><dd id="rod-panel-perpendicular-label">垂直于运动方向</dd>
+        <dt>固有长度</dt><dd id="rod-panel-perpendicular-base">5.00</dd>
+        <dt>当前长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
+      </dl>
+    </div>
+    <!-- 双画布并列模式 (sideBySide) -->
+    <div id="measurement-dual-view" class="hidden">
+      <div class="comparison-grid">
+        <div class="comparison-col">
+          <div class="comparison-label">🌍 地球参考系</div>
+          <div class="comparison-preview-wrap">
+            <canvas id="comparison-earth-canvas"></canvas>
+          </div>
+          <dl class="comparison-info">
+            <dt>平行尺当前长度</dt><dd id="comp-parallel-earth">5.00</dd>
+            <dt>垂直尺当前长度</dt><dd id="comp-perp-earth">5.00</dd>
+          </dl>
+        </div>
+        <div class="comparison-col">
+          <div class="comparison-label">🚀 飞船参考系</div>
+          <div class="comparison-preview-wrap">
+            <canvas id="comparison-ship-canvas"></canvas>
+          </div>
+          <dl class="comparison-info">
+            <dt>平行尺当前长度</dt><dd id="comp-parallel-ship">5.00</dd>
+            <dt>垂直尺当前长度</dt><dd id="comp-perp-ship">5.00</dd>
+          </dl>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -117,6 +180,13 @@
 
   <!-- Planet info popup card -->
   <div id="planet-info-card" class="planet-info-card hidden"></div>
+
+  <!-- First-person crosshair (reticle) -->
+  <div id="crosshair" class="hidden">
+    <div class="crosshair-h"></div>
+    <div class="crosshair-v"></div>
+    <div class="crosshair-dot"></div>
+  </div>
 
   <!-- Relativistic tunnel vignette — darkens screen edges at near-light-speed -->
   <div id="tunnel-vignette"></div>
