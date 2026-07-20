@@ -257,10 +257,9 @@ export class MeasurementRod {
 
     if (this.type === 'parallel') {
       this.visualGroup.scale.z = scaleRatio;
-      if (!isShipFrame && effectiveViewMode === 'observed') {
-        // Terrell effect: apparent rotation angle θ = asin(β)
-        // Apply as a yaw around Y so high β tilts more.
-        this.visualGroup.rotation.y = terrellAngle;
+      // Terrell rotation applied via quaternion from MeasurementPreview
+      if (!isShipFrame && effectiveViewMode === 'observed' && physicsState.terrellQuaternion) {
+        this.visualGroup.quaternion.copy(physicsState.terrellQuaternion);
       }
     } else {
       this.labelAnchor.rotation.set(0, 0, 0);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { MeasurementRod } from '../visual/MeasurementRod.js';
+import { terrellRotation } from '../physics/terrell.js';
 
 export class MeasurementPreview {
   constructor(canvas) {
@@ -121,7 +122,34 @@ export class MeasurementPreview {
     const isVisible = visible !== false;
     this.previewRoot.visible = isVisible;
 
-    this.parallelRod.update({ ...physicsState, visible: isVisible });
+    // ── Compute Terrell rotation for the parallel rod ──────────────────
+    const {
+      beta = 0,
+      terrellMode = 'precise',
+      viewMode = 'measured',
+      frame = 'earth'
+    } = physicsState;
+
+    let terrellQuaternion = null;
+    if (viewMode === 'observed' && frame !== 'ship' && beta > 0.0001) {
+      // Camera in preview space: base position (0, 8, 12) rotated by drag
+      const baseCameraPos = new THREE.Vector3(0, 8, 12);
+      const viewEuler = new THREE.Euler(this.dragPitch, this.dragYaw, 0, 'YXZ');
+      const rotatedCameraPos = baseCameraPos.clone().applyEuler(viewEuler);
+      // viewDir: from origin (where rod sits) toward camera
+      const viewDir = rotatedCameraPos.clone().normalize();
+      // velocityDir: along +Z in rod-local space (parallel rod is along Z)
+      const velocityDir = new THREE.Vector3(0, 0, 1);
+
+      const { angle, axis } = terrellRotation(beta, viewDir, velocityDir, terrellMode);
+      terrellQuaternion = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+    }
+
+    this.parallelRod.update({
+      ...physicsState,
+      terrellQuaternion,
+      visible: isVisible
+    });
     this.perpendicularRod.update({ ...physicsState, visible: isVisible });
 
     const viewEuler = new THREE.Euler(this.dragPitch, this.dragYaw, 0, 'YXZ');
