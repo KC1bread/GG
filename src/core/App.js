@@ -247,17 +247,6 @@ export class RelativisticVoyagerApp {
       '#concept-panel', '#quiz-panel', '#spacetime-panel', '#log-panel'
     ]);
 
-    // Orbit speed slider
-    const orbitSlider = document.getElementById('orbit-speed-slider');
-    const orbitVal = document.getElementById('orbit-speed-val');
-    if (orbitSlider && orbitVal) {
-      orbitSlider.addEventListener('input', () => {
-        const v = parseFloat(orbitSlider.value);
-        this.solarSystem.orbitSpeedMultiplier = v;
-        orbitVal.textContent = v.toFixed(2) + '×';
-      });
-    }
-
     // ── Terrell mode selector ───────────────────────────────────────────
     const terrellSelect = document.getElementById('terrell-mode-select');
     const terrellLabel = document.getElementById('terrell-mode-label');
