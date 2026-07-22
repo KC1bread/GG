@@ -151,7 +151,21 @@ canvas { display: block; }
 .mission-panel { left: 16px; bottom: 16px; width: 360px; }
 .concept-panel { right: 16px; bottom: 16px; width: 360px; }
 .quiz-panel { left: 392px; bottom: 16px; width: 360px; }
-.spacetime-panel { right: 392px; bottom: 16px; width: 392px; }
+.spacetime-panel { right: 392px; bottom: 16px; width: 300px; transition: width 0.25s ease; }
+.spacetime-panel.dual { width: 580px; }
+.spacetime-dual-wrap {
+  height: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #07111f;
+  border: 1px solid rgba(125, 211, 252, 0.16);
+}
+.spacetime-dual-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+#spacetime-canvas { width: 260px; height: 260px; display: block; }
 .log-panel { left: 312px; top: 16px; width: 250px; }
 
 .mode-badge {
