@@ -46,7 +46,7 @@ export class RelativisticVoyagerApp {
       beta: 0,
       frame: 'earth',
       viewMode: 'measured',
-      terrellMode: 'precise',   // NEW: 'lorentzOnly' | 'precise' | 'enhanced'
+      terrellMode: 'precise',   // 'lorentzOnly' | 'precise' | 'enhanced'
       viewPerspective: 'thirdPerson',
       paused: false,
       earthTime: 0,
@@ -93,9 +93,6 @@ export class RelativisticVoyagerApp {
 
     // Relativistic visual effects
     this.baseFov = 65;        // camera FOV at rest
-    this._lastAberrationBeta = -1;        // cached beta for stellar aberration
-    this._lastAberrationDir = new THREE.Vector3();  // cached velocity direction for aberration
-    this._aberrationActive = false;       // whether aberration is currently applied
     this._velocityForward = new THREE.Vector3(0, 0, -1); // ship velocity direction
     this.postProcess = null;  // relativistic full-screen shader
 
@@ -165,8 +162,8 @@ export class RelativisticVoyagerApp {
     // Reference scene: target star + lighting (no grid, no standalone Earth)
     this.refs = addReferenceScene(this.scene);
 
-    // Star field — rich static field (5000 stars + Milky Way, radius 3000)
-    this.starField = new StarField({ count: 8000, radius: 3000 });
+    // Star field — 新版高性能点云星空 (支持 Shader 内实时光行差/多普勒/头灯效应)
+    this.starField = new StarField({ count: 24000, radius: 3000 });
     this.starField.addTo(this.scene);
 
     // Spacecraft — scaled down 10× (0.12 vs original 1.2)
@@ -258,7 +255,7 @@ export class RelativisticVoyagerApp {
       });
     }
 
-    // ── Terrell mode selector ───────────────────────────────────────────
+    // ── Terrell mode selector ──
     const terrellSelect = document.getElementById('terrell-mode-select');
     const terrellLabel = document.getElementById('terrell-mode-label');
     if (terrellSelect) {
@@ -266,7 +263,6 @@ export class RelativisticVoyagerApp {
         this.state.terrellMode = terrellSelect.value;
       });
     }
-    // Store references for visibility toggle
     this._terrellSelect = terrellSelect;
     this._terrellLabel = terrellLabel;
 
@@ -283,24 +279,20 @@ export class RelativisticVoyagerApp {
   }
 
   _setKey(key, pressed) {
-    // Init audio on first keypress (browser autoplay policy)
     if (pressed && !this.engineAudio.initialised) {
       this.engineAudio.init();
     }
 
-    // V key — toggle perspective (only on press, not release)
     if (key === 'v' || key === 'V') {
       if (pressed) this._togglePerspective();
       return;
     }
 
-    // P key — toggle free-look mode
     if (key === 'p' || key === 'P') {
       if (pressed) this._toggleFreeLook();
       return;
     }
 
-    // Digit keys 1-8 — planet warp (first-person + observed only)
     const digitKeys = ['1','2','3','4','5','6','7','8'];
     const dIdx = digitKeys.indexOf(key);
     if (dIdx !== -1 && pressed) {
@@ -318,30 +310,22 @@ export class RelativisticVoyagerApp {
     if (key === 'Control') this.keys.ctrl  = pressed;
   }
 
-  /** Toggle between third-person and first-person perspective */
   _togglePerspective() {
     const next = this.state.viewPerspective === 'thirdPerson'
       ? 'firstPerson' : 'thirdPerson';
     this._setPerspective(next);
   }
 
-  /**
-   * Set perspective to a specific mode. Called by V-key toggle and UI dropdown.
-   * @param {'firstPerson' | 'thirdPerson'} mode
-   */
   _setPerspective(mode) {
     if (this.state.viewPerspective === mode) return;
     this.state.viewPerspective = mode;
 
-    // Sync the dropdown in the control panel
     const sel = document.getElementById('perspective-select');
     if (sel) sel.value = mode;
 
-    // Reset free-look angles when switching perspective
     this.freeLookYaw = 0;
     this.freeLookPitch = 0;
 
-    // Adjust FOV: wider for first-person immersion
     if (mode === 'firstPerson') {
       this.camera.fov = 90;
       this.spacecraft.group.visible = false;
@@ -359,19 +343,11 @@ export class RelativisticVoyagerApp {
     });
   }
 
-  /**
-   * Toggle free-look mode on/off with P key.
-   * When toggled on, mouse movement directly controls view direction
-   * without needing to hold any button. Press P again or Esc to exit.
-   */
   _toggleFreeLook() {
     this._freeLookToggled = !this._freeLookToggled;
     const canvas = this.renderer.domElement;
 
     if (this._freeLookToggled) {
-      // Reset mouse anchor so the next mousemove re-initialises from the
-      // current cursor position (avoids NaN when _lastMouse* are undefined
-      // because mousedown never fired).
       this._lastMouseX = undefined;
       this._lastMouseY = undefined;
       canvas.style.cursor = 'move';
@@ -387,9 +363,7 @@ export class RelativisticVoyagerApp {
   setupMouse() {
     const canvas = this.renderer.domElement;
 
-    // ---- Left click — planet info -------------------------------------------
     canvas.addEventListener('click', (e) => {
-      // Ignore clicks on UI panels
       if (e.target.closest('.panel') || e.target.closest('.panel-dock')) return;
 
       const rect = canvas.getBoundingClientRect();
@@ -398,7 +372,6 @@ export class RelativisticVoyagerApp {
 
       this.raycaster.setFromCamera(this.mouse, this.camera);
 
-      // Collect all planet meshes for intersection
       const planetMeshes = this.solarSystem.planets.map(p => p.mesh);
       const intersects = this.raycaster.intersectObjects(planetMeshes);
 
@@ -413,7 +386,6 @@ export class RelativisticVoyagerApp {
       }
     });
 
-    // ---- Right click drag — free-look ---------------------------------------
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 2) {
         this._freeLookActive = true;
@@ -430,11 +402,8 @@ export class RelativisticVoyagerApp {
     });
 
     window.addEventListener('mousemove', (e) => {
-      // Free-look active if P-toggle is on OR right mouse button is held
       if (!this._freeLookToggled && !this._freeLookActive) return;
 
-      // Initialize mouse anchor on first move (handles P-toggle where
-      // mousedown never fired, so _lastMouse* are undefined).
       if (this._lastMouseX === undefined) {
         this._lastMouseX = e.clientX;
         this._lastMouseY = e.clientY;
@@ -448,17 +417,14 @@ export class RelativisticVoyagerApp {
 
       this.freeLookYaw -= dx * this._mouseSensitivity;
       this.freeLookPitch -= dy * this._mouseSensitivity;
-      // Clamp pitch so you can't flip over
       this.freeLookPitch = Math.max(
         -Math.PI / 2 + 0.02,
         Math.min(Math.PI / 2 - 0.02, this.freeLookPitch)
       );
     });
 
-    // Prevent context menu on right-click over the canvas
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // Hide info / exit free-look when pressing Escape
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this._hidePlanetInfo();
@@ -487,7 +453,6 @@ export class RelativisticVoyagerApp {
       </div>
     `;
 
-    // Position card near click, clamping to viewport
     const cardW = 300;
     const cardH = 260;
     let left = x + 16;
@@ -523,7 +488,6 @@ export class RelativisticVoyagerApp {
 
   // ---- State change ----------------------------------------------------------
 
-  /** Keep the beta slider in sync when keyboard changes the value */
   _syncBetaSlider() {
     const slider = document.getElementById('speed-slider');
     if (slider) {
@@ -535,77 +499,50 @@ export class RelativisticVoyagerApp {
   //  Planet Jump — keys 1-8 warp to planets (first-person + observed only)
   // ==========================================================================
 
-  /**
-   * Initiate planet-jump sequence.  Only active in first-person observed mode.
-   * @param {number} planetIndex — 0-7 index into solarSystem.planets
-   */
   _handlePlanetJump(planetIndex) {
     if (this.state.viewPerspective !== 'firstPerson' || this.state.viewMode !== 'observed') {
       return;
     }
-    if (this._jumpState !== 'idle') return; // already jumping
+    if (this._jumpState !== 'idle') return;
 
     this._jumpState = 'accelerating';
     this._jumpTargetIndex = planetIndex;
   }
 
-  /**
-   * Advance the jump state machine each frame.
-   *
-   * Phase 1 (accelerating): rapidly ramp beta and currentSpeed to max.
-   * Phase 2 (cruising):   fly toward the planet at max speed — the approach
-   *                        is fully visible so the player sees the planet
-   *                        grow and the relativistic effects at peak beta.
-   *                        On arrival the ship snaps the last ~2 units,
-   *                        faces the planet, and resets to idle.
-   * @param {number} dt — delta time in seconds
-   */
   _updateJump(dt) {
     if (this._jumpState === 'idle') return;
 
-    // ---- Cancel jump if conditions change mid-jump -------------------------
     if (this.state.viewPerspective !== 'firstPerson' || this.state.viewMode !== 'observed') {
       this._jumpState = 'idle';
       this._jumpTargetIndex = -1;
       return;
     }
 
-    // ======================================================================
-    //  Phase 1 — Accelerating
-    // ======================================================================
     if (this._jumpState === 'accelerating') {
-      // Rapidly ramp beta to 0.99
       this.state.beta = Math.min(0.99, this.state.beta + 0.8 * dt);
       this._syncBetaSlider();
 
-      // Accelerate currentSpeed much faster than normal
       const targetSpeed = this.state.beta * this.maxSpeed;
       if (this.currentSpeed < targetSpeed) {
         this.currentSpeed += this.accelRate * 8 * dt;
         if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
       }
 
-      // Switch to cruising once near peak speed
       if (this.currentSpeed >= this.maxSpeed * 0.95) {
         this._jumpState = 'cruising';
-        // Lock free-look so the camera stays aimed at the planet
         this.freeLookYaw = 0;
         this.freeLookPitch = 0;
       }
       return;
     }
 
-    // ======================================================================
-    //  Phase 2 — Cruising (visible max-speed flight toward planet)
-    // ======================================================================
     if (this._jumpState === 'cruising') {
       const planet = this.solarSystem.planets[this._jumpTargetIndex];
       if (!planet) { this._jumpState = 'idle'; return; }
 
       const planetPos = planet.group.position;
-      const pRadius = planet.def.radius * 100; // SCALE = 100
+      const pRadius = planet.def.radius * 100;
 
-      // Saturn's rings extend to r * 2.2 — land beyond the outer ring edge
       let safeRadius = pRadius;
       if (planet.def.hasRings) {
         safeRadius = pRadius * 2.2;
@@ -613,29 +550,24 @@ export class RelativisticVoyagerApp {
       const buffer = 15;
       const targetDist = safeRadius + buffer;
 
-      // Direction from ship toward planet
       const toPlanet = new THREE.Vector3().subVectors(planetPos, this.shipPosition);
       const dist = toPlanet.length();
 
-      // --- Arrival: snap final ~2 units, face planet, reset ---------------
       if (dist <= targetDist + 2) {
         const dir = dist > 0.001 ? toPlanet.normalize() : new THREE.Vector3(0, 0, 1);
         const targetPos = planetPos.clone().add(dir.clone().multiplyScalar(-targetDist));
         targetPos.y = Math.max(0.5, targetPos.y);
         this.shipPosition.copy(targetPos);
 
-        // Face exactly toward the planet centre
         const lookDir = new THREE.Vector3().subVectors(planetPos, this.shipPosition).normalize();
         this.shipHeading = Math.atan2(-lookDir.x, -lookDir.z);
         this.freeLookYaw = 0;
         this.freeLookPitch = 0;
 
-        // Snap camera instantly (bypass lerp)
         const fpOffset = this.firstPersonOffset.clone();
         fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
         this._smoothCamPos.copy(this.shipPosition.clone().add(fpOffset));
 
-        // Reset flight state
         this.currentSpeed = 0;
         this.state.beta = 0;
         this._syncBetaSlider();
@@ -644,7 +576,6 @@ export class RelativisticVoyagerApp {
         return;
       }
 
-      // --- Cruise: fly toward planet at max speed -------------------------
       this.state.beta = 0.99;
       this._syncBetaSlider();
       this.currentSpeed = this.state.beta * this.maxSpeed;
@@ -652,14 +583,12 @@ export class RelativisticVoyagerApp {
       const moveDir = toPlanet.normalize();
       this.shipPosition.add(moveDir.clone().multiplyScalar(this.currentSpeed * dt));
 
-      // Smoothly rotate ship heading to face the planet during approach
       const planetHeading = Math.atan2(-moveDir.x, -moveDir.z);
       let headingDiff = planetHeading - this.shipHeading;
       while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
       while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
       this.shipHeading += headingDiff * Math.min(1, 4 * dt);
 
-      // Update velocity direction for relativistic post-process shader
       this._velocityForward.copy(moveDir);
     }
   }
@@ -701,10 +630,6 @@ export class RelativisticVoyagerApp {
 
   // ---- Terrell transform application -----------------------------------------
 
-  /**
-   * Apply Penrose-Terrell transforms to all visible objects.
-   * Called every frame from update().
-   */
   _applyTerrellToScene(beta) {
     const mode = this.state.terrellMode;
     const isEarthFrame = this.state.frame === 'earth';
@@ -715,7 +640,6 @@ export class RelativisticVoyagerApp {
       .applyQuaternion(this.spacecraft.group.quaternion)
       .normalize();
 
-    // ── Planets ──────────────────────────────────────────────────────
     if (this.solarSystem && this.solarSystem.planets) {
       for (const planet of this.solarSystem.planets) {
         const planetWorldPos = new THREE.Vector3();
@@ -723,7 +647,6 @@ export class RelativisticVoyagerApp {
         const viewDir = this._smoothCamPos.clone().sub(planetWorldPos).normalize();
 
         if (beta < 0.0001) {
-          // Reset: restore auto-update and identity matrix on all mesh children
           planet.group.children.forEach(child => {
             if (child.isMesh) {
               child.matrix.identity();
@@ -734,11 +657,9 @@ export class RelativisticVoyagerApp {
           const transform = terrellTransformMatrix(
             beta, viewDir, velocityDir, effectiveMode
           );
-          // Compose Terrell transform with planet's own local matrix
-          // so self-rotation (SolarSystem.update's .rotation.y) still works
           planet.group.children.forEach(child => {
             if (child.isMesh) {
-              child.updateMatrix();  // capture current position/rotation/scale
+              child.updateMatrix();
               const local = child.matrix.clone();
               child.matrix.multiplyMatrices(transform, local);
               child.matrixAutoUpdate = false;
@@ -748,7 +669,6 @@ export class RelativisticVoyagerApp {
       }
     }
 
-    // ── Spacecraft (third-person, Earth frame) ────────────────────────
     if (this.state.viewPerspective === 'thirdPerson' && isEarthFrame && beta >= 0.0001) {
       const shipWorldPos = new THREE.Vector3();
       this.spacecraft.group.getWorldPosition(shipWorldPos);
@@ -763,7 +683,6 @@ export class RelativisticVoyagerApp {
         this.spacecraft.terrellGroup.matrixAutoUpdate = false;
       }
     } else if (this.spacecraft.terrellGroup) {
-      // Reset to identity when not applicable or at zero speed
       this.spacecraft.terrellGroup.matrix.identity();
       this.spacecraft.terrellGroup.matrixAutoUpdate = true;
     }
@@ -775,18 +694,14 @@ export class RelativisticVoyagerApp {
     const dt = Math.min(0.05, this.clock.getDelta());
     const r = computeRelativityState(this.state);
     const ratio = lengthContractionRatio(this.state.beta);
-    // Effective Terrell mode — used by _applyTerrellToScene and rodPhysicsState
     const effectiveMode = (this.state.viewMode === 'observed' && this.state.frame === 'earth')
       ? this.state.terrellMode : 'lorentzOnly';
 
     // ---- Keyboard flight — smooth acceleration / deceleration ----------------
     if (!this.state.paused) {
-      // ---- Planet-jump update (handles all movement during jump) ------------
       this._updateJump(dt);
 
-      // ---- Normal flight: beta, speed, turning (disabled during jump) --------
       if (this._jumpState === 'idle') {
-        // ---- Beta ramp via Shift / Ctrl ---------------------------------------
         if (this.keys.shift) {
           this.state.beta = Math.min(0.99, this.state.beta + this.betaRampRate * dt);
           this._syncBetaSlider();
@@ -796,10 +711,8 @@ export class RelativisticVoyagerApp {
           this._syncBetaSlider();
         }
 
-        // Target speed: full when forward pressed, zero otherwise
         const targetSpeed = this.keys.forward ? this.state.beta * this.maxSpeed : 0;
 
-        // Smooth ramp
         if (this.currentSpeed < targetSpeed) {
           this.currentSpeed += this.accelRate * dt;
           if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
@@ -807,15 +720,12 @@ export class RelativisticVoyagerApp {
           this.currentSpeed -= this.decelRate * dt;
           if (this.currentSpeed < targetSpeed) this.currentSpeed = targetSpeed;
         }
-        if (this.currentSpeed < 0.0005) this.currentSpeed = 0; // dead zone
+        if (this.currentSpeed < 0.0005) this.currentSpeed = 0;
 
         if (this.keys.left)  this.shipHeading += this.turnRate * dt;
         if (this.keys.right) this.shipHeading -= this.turnRate * dt;
       }
 
-      // Forward direction:
-      //   Third-person → ship heading (A/D turn the ship)
-      //   First-person  → crosshair / camera look direction (shipHeading + freeLook + pitch)
       let forward;
       if (this.state.viewPerspective === 'firstPerson') {
         const totalYaw = this.shipHeading + this.freeLookYaw;
@@ -830,37 +740,30 @@ export class RelativisticVoyagerApp {
           -Math.sin(this.shipHeading), 0, -Math.cos(this.shipHeading)
         );
       }
-      this._velocityForward.copy(forward);  // cache for aberration
+      this._velocityForward.copy(forward);
 
-      // Forward movement (disabled during jump — _updateJump handles it)
       if (this._jumpState === 'idle' && this.currentSpeed > 0.0001) {
         this.shipPosition.add(forward.clone().multiplyScalar(this.currentSpeed * dt));
-        // In first-person, align ship heading to where we're thrusting (crosshair direction)
         if (this.state.viewPerspective === 'firstPerson') {
           this.shipHeading += this.freeLookYaw;
           this.freeLookYaw = 0;
         }
       }
-      // Reverse — also bleeds speed faster (disabled during jump)
+
       if (this._jumpState === 'idle' && this.keys.backward) {
         this.shipPosition.add(forward.clone().multiplyScalar(-this.currentSpeed * 0.6 * dt));
         this.currentSpeed = Math.max(0, this.currentSpeed - this.decelRate * 1.5 * dt);
       }
 
-      // ---- Vertical movement (Q / E) — disabled during jump ------------------
       if (this._jumpState === 'idle') {
         if (this.keys.up)   this.shipPosition.y += this.verticalSpeed * dt;
         if (this.keys.down) this.shipPosition.y -= this.verticalSpeed * dt;
       }
-      // Clamp Y so ship doesn't sink through the Sun
       this.shipPosition.y = Math.max(-115, Math.min(2000, this.shipPosition.y));
 
-      // ---- Collision detection (solid planets + Sun) ---------------------------
-      // Disabled during planet jump to allow passing through models
       if (this._jumpState === 'idle') {
-        const shipR = 2.5; // small buffer around ship
+        const shipR = 2.5;
 
-        // Sun collision (origin, radius = 1.2 × SCALE = 120)
         const sunR = 120 + shipR;
         const sunDist = this.shipPosition.length();
         if (sunDist < sunR && sunDist > 0.001) {
@@ -868,10 +771,9 @@ export class RelativisticVoyagerApp {
           this.currentSpeed *= 0.2;
         }
 
-        // Planet collisions
         for (const p of this.solarSystem.planets) {
           const px = p.group.position.x, pz = p.group.position.z;
-          const pR = p.def.radius * 100 + shipR; // SCALE = 100
+          const pR = p.def.radius * 100 + shipR;
           const dx = this.shipPosition.x - px;
           const dz = this.shipPosition.z - pz;
           const dist = Math.sqrt(dx * dx + dz * dz);
@@ -901,18 +803,15 @@ export class RelativisticVoyagerApp {
       }
     }
 
-    // ---- Camera (first-person cockpit or third-person chase cam) --------------
+    // ---- Camera --------------------------------------------------------------
     if (this.state.viewPerspective === 'firstPerson') {
-      // First-person: camera at cockpit position, free-look from ship heading
       const fpOffset = this.firstPersonOffset.clone();
       fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
       const fpCamPos = this.shipPosition.clone().add(fpOffset);
 
-      // Faster lerp for responsive first-person feel
       this._smoothCamPos.lerp(fpCamPos, this.cameraLerp * 2.0);
       this.camera.position.copy(this._smoothCamPos);
 
-      // Look direction = ship heading + free-look yaw/pitch
       const totalYaw = this.shipHeading + this.freeLookYaw;
       const cosPitch = Math.cos(this.freeLookPitch);
       const lookDir = new THREE.Vector3(
@@ -922,9 +821,7 @@ export class RelativisticVoyagerApp {
       );
       this.camera.lookAt(this.camera.position.clone().add(lookDir));
     } else {
-      // Third-person: chase cam orbiting ship via free-look yaw/pitch
       const totalYaw = this.shipHeading + this.freeLookYaw;
-      // Rotate default offset (behind + above) by total yaw + pitch
       const euler = new THREE.Euler(this.freeLookPitch, totalYaw, 0, 'YXZ');
       const rotatedOffset = this.cameraLocalOffset.clone().applyEuler(euler);
       const desiredCamPos = this.shipPosition.clone().add(rotatedOffset);
@@ -934,76 +831,61 @@ export class RelativisticVoyagerApp {
       this.camera.lookAt(this.shipPosition);
     }
 
-    // ---- Relativistic visual effects -------------------------------------------
-    // Crosshair — visible only in first-person view
+    // ---- Relativistic visual effects & Post-process ----------------------------
     const crosshair = document.getElementById('crosshair');
     if (crosshair) {
       crosshair.classList.toggle('hidden', this.state.viewPerspective !== 'firstPerson');
     }
 
-    // Determine whether post-process shader should be active
     const b = this.state.beta;
     const usePostProcess = this.state.viewMode === 'observed'
       && b > 0.001
       && this.state.viewPerspective === 'firstPerson'
       && this.postProcess;
 
-    // Transition tracking for smooth measured ↔ observed switching
     if (this.postProcess) {
       this.postProcess.setTransition(usePostProcess ? 1 : 0);
       this.postProcess.updateTransition(dt);
     }
 
-    // Vignette overlay — disable when post-process shader handles darkening
+    // =========================================================================
+    // 💡 核心视觉解耦计算：将实际物理速度与新版 StarField 的相对论效果绑定
+    // =========================================================================
+    let actualBeta = 0;
+    if (this.maxSpeed > 0) {
+      actualBeta = (this.currentSpeed / this.maxSpeed) * this.state.beta;
+    }
+    actualBeta = THREE.MathUtils.clamp(actualBeta, 0.0, 0.999);
+
+    // 暗角（Vignette Overlay）跟着实际速度变化（若使用 PostProcess 屏效则关闭）
     const vignette = document.getElementById('tunnel-vignette');
     if (vignette) {
-      vignette.style.opacity = usePostProcess ? '0' : Math.min(0.92, b * 1.1);
+      vignette.style.opacity = usePostProcess ? '0' : Math.min(0.92, actualBeta * 1.1);
     }
 
-    // Stellar aberration + Doppler colour shift — first-person only.
-    // When post-process shader is active, skip CPU-side star aberration
-    // (the shader handles aberration + Doppler + beaming for the entire scene).
-    if (this.state.viewPerspective === 'firstPerson' && !usePostProcess) {
-      const velDir = this._velocityForward;
-
-      const betaChanged = Math.abs(b - this._lastAberrationBeta) > 0.001;
-      const dirChanged = this._lastAberrationDir.lengthSq() < 0.01
-        || this._lastAberrationDir.dot(velDir) < 0.9995;
-
-      if (!this._aberrationActive || betaChanged || dirChanged) {
-        if (b > 0.001) {
-          this.starField.applyAberration(b, velDir);
-        } else {
-          this.starField.resetAberration();
-        }
-        this._lastAberrationBeta = b;
-        this._lastAberrationDir.copy(velDir);
-        this._aberrationActive = true;
-      }
-    } else if (this._aberrationActive && !usePostProcess) {
-      this.starField.resetAberration();
-      this._aberrationActive = false;
-      this._lastAberrationBeta = -1;
-      this._lastAberrationDir.set(0, 0, 0);
-    }
+    // 更新新版 StarField 的光行差、多普勒与头灯效应
+    let visualBeta = Math.max(0.0001, actualBeta);
+    const starfieldVelocityDir = this._velocityForward.clone().normalize();
+    this.starField.setRelativisticState(visualBeta, starfieldVelocityDir);
+    // =========================================================================
 
     // ---- Animate solar system -------------------------------------------------
     if (this.solarSystem) {
       this.solarSystem.update(dt);
     }
 
-    // ── Penrose-Terrell transforms ────────────────────────────────────
+    // ── Penrose-Terrell transforms ──
     this._applyTerrellToScene(r.beta);
 
     // ---- Visual modules -------------------------------------------------------
-    this.starField.update(this.state.beta);
-    // Vertical input for spacecraft pitch: +1 nose-up (Q), -1 nose-down (E)
+    this.starField.update(dt);
+    
     let verticalInput = 0;
     if (this.keys.up)   verticalInput += 1;
     if (this.keys.down) verticalInput -= 1;
     this.spacecraft.update(this.state.beta, this.keys.forward, verticalInput);
 
-    // ── Spacecraft base scale (applied to group, Terrell applied to terrellGroup) ──
+    // ── Spacecraft base scale ──
     const baseScale = 0.12;
     this.spacecraft.group.scale.setScalar(baseScale);
 
@@ -1013,7 +895,7 @@ export class RelativisticVoyagerApp {
       lengthRatio: ratio,
       viewMode: this.state.viewMode,
       frame: this.state.frame,
-      terrellMode: effectiveMode,  // pass effective mode for rod Terrell computation
+      terrellMode: effectiveMode,
       visible: true
     };
 
@@ -1024,7 +906,7 @@ export class RelativisticVoyagerApp {
     });
     this._updateMeasurementPanel(r);
 
-    // ── 单画布 / 双画布切换（sideBySide 模式） ──
+    // ── 单画布 / 双画布切换 ──
     const isSideBySide = this.state.frame === 'sideBySide';
     const measPanel = document.getElementById('measurement-panel');
     const measSingle = document.getElementById('measurement-single-view');
@@ -1033,7 +915,7 @@ export class RelativisticVoyagerApp {
     if (measSingle) measSingle.classList.toggle('hidden', isSideBySide);
     if (measDual)   measDual.classList.toggle('hidden', !isSideBySide);
 
-    // ── 并列对比：双测量尺（懒加载） ──
+    // ── 并列对比 ──
     if (isSideBySide) {
       if (this.comparisonEarthPreview && this.comparisonShipPreview) {
         const earthRodState = { ...rodPhysicsState, frame: 'earth' };
@@ -1049,9 +931,10 @@ export class RelativisticVoyagerApp {
       }
     }
 
-    // Cockpit interior — animate indicator lights
+    // Cockpit interior
     this.cockpit.update(dt, this.state.beta);
-    // Engine audio — pitch & volume track current speed (mute when paused)
+    
+    // Engine audio
     if (this.state.paused) {
       this.engineAudio.mute();
     } else {
@@ -1062,7 +945,7 @@ export class RelativisticVoyagerApp {
     this.missionSystem.update();
     this.spacetimeDiagram.update();
 
-    // ---- Final render — post-process shader or direct ------------------------
+    // ---- Final render --------------------------------------------------------
     if (usePostProcess) {
       this.postProcess.render(b, this.camera, this.scene, this.renderer, this._velocityForward);
     } else {
