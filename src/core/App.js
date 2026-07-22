@@ -200,6 +200,8 @@ export class RelativisticVoyagerApp {
     this.quizSystem.init();
 
     this.spacetimeDiagram = new SpacetimeDiagram(this.state);
+    this.comparisonEarthSpacetime = null;
+    this.comparisonShipSpacetime  = null;
 
     // ── 双测量尺 3D 预览 ──
     this.measurementPreviewCanvas = document.getElementById('measurement-preview-canvas');
@@ -797,7 +799,8 @@ export class RelativisticVoyagerApp {
     if (!this.state.paused && this.currentSpeed > 0.001) {
       this.state.earthTime +=
         dt * this.state.timeScale * Math.max(0.2, this.state.beta * 12);
-      if (this.state.earthTime > r.etaEarth && Number.isFinite(r.etaEarth)) {
+      const maxTime = this.spacetimeDiagram.getMaxTime();
+      if (Number.isFinite(maxTime) && this.state.earthTime >= maxTime) {
         this.state.earthTime = 0;
         this.logger.log('arrival_loop_reset', { beta: this.state.beta, gamma: r.gamma });
       }
@@ -906,7 +909,7 @@ export class RelativisticVoyagerApp {
     });
     this._updateMeasurementPanel(r);
 
-    // ── 单画布 / 双画布切换 ──
+    // ── 统一面板：单画布/双画布切换（双测量尺 + 时空图） ──
     const isSideBySide = this.state.frame === 'sideBySide';
     const measPanel = document.getElementById('measurement-panel');
     const measSingle = document.getElementById('measurement-single-view');
@@ -914,6 +917,13 @@ export class RelativisticVoyagerApp {
     if (measPanel)  measPanel.classList.toggle('dual', isSideBySide);
     if (measSingle) measSingle.classList.toggle('hidden', isSideBySide);
     if (measDual)   measDual.classList.toggle('hidden', !isSideBySide);
+
+    const stPanel = document.getElementById('spacetime-panel');
+    const stSingle = document.getElementById('spacetime-single-view');
+    const stDual   = document.getElementById('spacetime-dual-view');
+    if (stPanel)  stPanel.classList.toggle('dual', isSideBySide);
+    if (stSingle) stSingle.classList.toggle('hidden', isSideBySide);
+    if (stDual)   stDual.classList.toggle('hidden', !isSideBySide);
 
     // ── 并列对比 ──
     if (isSideBySide) {
@@ -929,6 +939,18 @@ export class RelativisticVoyagerApp {
         if (this.comparisonEls.perpEarth)     this.comparisonEls.perpEarth.textContent     = '5.00';
         if (this.comparisonEls.perpShip)      this.comparisonEls.perpShip.textContent      = '5.00';
       }
+
+      // ── 侧边栏双时空图（懒加载） ──
+      if (!this.comparisonEarthSpacetime) {
+        const earthCanvas = document.getElementById('spacetime-earth-canvas');
+        const shipCanvas  = document.getElementById('spacetime-ship-canvas');
+        if (earthCanvas && shipCanvas) {
+          this.comparisonEarthSpacetime = new SpacetimeDiagram(this.state, { canvas: earthCanvas, frame: 'earth' });
+          this.comparisonShipSpacetime  = new SpacetimeDiagram(this.state, { canvas: shipCanvas, frame: 'ship' });
+        }
+      }
+      this.comparisonEarthSpacetime?.update();
+      this.comparisonShipSpacetime?.update();
     }
 
     // Cockpit interior
@@ -943,7 +965,7 @@ export class RelativisticVoyagerApp {
     this.hud.update();
     this.dualClock.update(r);
     this.missionSystem.update();
-    this.spacetimeDiagram.update();
+    if (!isSideBySide) this.spacetimeDiagram.update();
 
     // ---- Final render --------------------------------------------------------
     if (usePostProcess) {
