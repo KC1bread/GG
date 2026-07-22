@@ -163,8 +163,22 @@
 
   <section id="spacetime-panel" class="panel spacetime-panel hidden">
     <h2>Minkowski 时空图</h2>
-    <canvas id="spacetime-canvas" width="360" height="280"></canvas>
-    <p class="small-note">纵轴为时间 ct，横轴为空间 x；飞船速度越大，世界线越接近光锥。</p>
+    <div id="spacetime-single-view">
+      <canvas id="spacetime-canvas" width="260" height="260"></canvas>
+      <p class="small-note">纵轴为时间 ct，横轴为空间 x；飞船速度越大，世界线越接近光锥。</p>
+    </div>
+    <div id="spacetime-dual-view" class="hidden">
+      <div class="comparison-grid">
+        <div class="comparison-col">
+          <div class="comparison-label">🌍 地球参考系</div>
+          <div class="spacetime-dual-wrap"><canvas id="spacetime-earth-canvas" width="240" height="320"></canvas></div>
+        </div>
+        <div class="comparison-col">
+          <div class="comparison-label">🚀 飞船参考系</div>
+          <div class="spacetime-dual-wrap"><canvas id="spacetime-ship-canvas" width="240" height="320"></canvas></div>
+        </div>
+      </div>
+    </div>
   </section>
 
   <section id="log-panel" class="panel log-panel hidden">
