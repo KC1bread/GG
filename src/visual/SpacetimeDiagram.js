@@ -48,16 +48,14 @@ export class SpacetimeDiagram {
     const w = rectWidth;
     const h = rectHeight;
 
-    const top    = 18;
-    const bottomNoteHeight = 42;
-    const legendHeight     = 50;
-    const paddingX = 18;
-    const originY = h - bottomNoteHeight - legendHeight - 18;
-    const origin  = { x: w / 2, y: originY };
-    const availY  = origin.y - top;
-    const availX  = Math.min(origin.x - paddingX, w / 2 - paddingX);
-    const conePx  = Math.min(availX, availY);
-    const beta    = Math.max(0.0001, this.state.beta);
+    const top      = 10;
+    const paddingX = 14;
+    const originY  = Math.round(h * 0.555);
+    const origin   = { x: w / 2, y: originY };
+    const availY   = origin.y - top;
+    const availX   = Math.min(origin.x - paddingX, w / 2 - paddingX);
+    const conePx   = Math.min(availX, availY);
+    const beta     = Math.max(0.0001, this.state.beta);
     const progress = Math.min(1, this.state.earthTime / DIAGRAM_MAX_EARTH_TIME);
     const isShip  = (this._frameOverride || this.state.frame) === 'ship';
     const theta   = Math.atan(beta);
@@ -114,9 +112,15 @@ export class SpacetimeDiagram {
 
       ctx.fillStyle = axisColor;
       ctx.font = '13px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText("x'", xPrimeEndX + 4, xPrimeEndY + 6);
+      // x' 标注：靠近右边界时反向偏移
+      const _labelX = xPrimeEndX + 4;
+      if (_labelX + 24 > w) {
+        ctx.textAlign = 'right';
+        ctx.fillText("x'", xPrimeEndX - 6, xPrimeEndY + 10);
+      } else {
+        ctx.textAlign = 'left';
+        ctx.fillText("x'", _labelX, xPrimeEndY + 6);
+      }
 
       // ── ② ct' 轴（飞船时间轴）= 黄色飞船世界线 ──
       //    方向 (β, -1) 在像素空间，与 x' 轴对称于 45° 光锥
@@ -132,8 +136,20 @@ export class SpacetimeDiagram {
 
       ctx.fillStyle = '#facc15';
       ctx.font = '13px sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText("ct'", shipEndX + 8, shipEndY + 6);
+      // ct' 标注：靠近右边界时反向偏移；与 x' 端点距离 < 14px 时错开位置
+      const _ctLabelX = shipEndX + 8;
+      const _distToXPrime = Math.abs(shipEndX - xPrimeEndX) + Math.abs(shipEndY - xPrimeEndY);
+      if (_distToXPrime < 14) {
+        // 端点几乎重合 → ct' 标签下移错开
+        ctx.textAlign = 'left';
+        ctx.fillText("ct'", shipEndX - 36, shipEndY + 24);
+      } else if (_ctLabelX + 24 > w) {
+        ctx.textAlign = 'right';
+        ctx.fillText("ct'", shipEndX - 6, shipEndY + 6);
+      } else {
+        ctx.textAlign = 'left';
+        ctx.fillText("ct'", _ctLabelX, shipEndY + 6);
+      }
 
       // ── ③ 地球世界线：向左上反向倾斜（飞船系中地球以 -β 运动） ──
       //    方向 (-β, -1) 在像素空间
@@ -149,8 +165,14 @@ export class SpacetimeDiagram {
 
       ctx.fillStyle = '#7dd3fc';
       ctx.font = '13px sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText('Earth', earthEndX - 6, earthEndY + 6);
+      // Earth 标注：靠近左边界（< 40）时放到蓝线右侧
+      if (earthEndX < 40) {
+        ctx.textAlign = 'left';
+        ctx.fillText('Earth', earthEndX + 6, earthEndY - 8);
+      } else {
+        ctx.textAlign = 'right';
+        ctx.fillText('Earth', earthEndX - 6, earthEndY + 6);
+      }
 
       // ── ④ 当前事件白色圆点 ──
       ctx.fillStyle = '#ffffff';
@@ -358,7 +380,7 @@ export class SpacetimeDiagram {
     const legBoxH  = legRows * legItemH + legPad * 2;
 
     const legX = w / 2;
-    const legY = originY + 20;
+    const legY = originY + 14;
     const legLX = legX - legBoxW / 2;
     const legTY = legY;
 
