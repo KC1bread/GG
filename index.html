@@ -18,6 +18,7 @@
     <h2>飞船控制</h2>
     <label>
       速度 β = v/c
+      <button id="reset-btn" style="font-size:10px;padding:1px 8px;margin-left:6px;vertical-align:middle;border-radius:6px;border:1px solid rgba(125,211,252,0.2);background:rgba(125,211,252,0.06);color:#9fb0d0;cursor:pointer;line-height:1.5;display:inline-block;">重置</button>
       <input id="speed-slider" type="range" min="0" max="0.99" step="0.001" value="0" />
     </label>
     <div class="speed-row">
@@ -62,16 +63,6 @@
       </select>
     </label>
 
-    <label>
-      行星轨道速度
-      <input id="orbit-speed-slider" type="range" min="0" max="2" step="0.01" value="0.08" />
-      <span class="slider-val" id="orbit-speed-val">0.08×</span>
-    </label>
-
-    <div class="button-row">
-      <button id="pause-btn">暂停</button>
-      <button id="reset-btn">重置</button>
-    </div>
   </section>
 
   <section id="measurement-panel" class="panel measurement-panel hidden">
@@ -86,10 +77,8 @@
       </div>
       <dl class="measurement-info">
         <dt>平行尺</dt><dd id="rod-panel-parallel-label">沿运动方向</dd>
-        <dt>固有长度</dt><dd id="rod-panel-parallel-base">5.00</dd>
         <dt>当前长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
         <dt>垂直尺</dt><dd id="rod-panel-perpendicular-label">垂直于运动方向</dd>
-        <dt>固有长度</dt><dd id="rod-panel-perpendicular-base">5.00</dd>
         <dt>当前长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
       </dl>
     </div>
@@ -171,11 +160,11 @@
       <div class="comparison-grid">
         <div class="comparison-col">
           <div class="comparison-label">🌍 地球参考系</div>
-          <div class="spacetime-dual-wrap"><canvas id="spacetime-earth-canvas" width="240" height="320"></canvas></div>
+          <div class="spacetime-dual-wrap"><canvas id="spacetime-earth-canvas" width="240" height="250"></canvas></div>
         </div>
         <div class="comparison-col">
           <div class="comparison-label">🚀 飞船参考系</div>
-          <div class="spacetime-dual-wrap"><canvas id="spacetime-ship-canvas" width="240" height="320"></canvas></div>
+          <div class="spacetime-dual-wrap"><canvas id="spacetime-ship-canvas" width="240" height="250"></canvas></div>
         </div>
       </div>
     </div>
