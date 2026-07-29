@@ -28,6 +28,13 @@ export class Hud {
   }
 
   update() {
+    // Terrell 档位名称映射
+    const _terrellNames = {
+      lorentzOnly: '纯长度收缩',
+      precise: 'Penrose-Terrell精确',
+      enhanced: '增强教学'
+    };
+
     const r = computeRelativityState(this.state);
     this.el.beta.textContent = fmt(r.beta, 3);
     this.el.gamma.textContent = fmt(r.gamma, 3);
@@ -37,6 +44,19 @@ export class Hud {
     this.el.shipDistance.textContent = `${fmt(r.shipDistance, 2)} ly`;
     this.el.eta.textContent = `${fmtYears(r.etaEarth)} / ${fmtYears(r.etaShip)}`;
     this.el.lengthRatio.textContent = fmt(r.lengthRatio, 3);
-    this.el.badge.textContent = `${this.state.viewMode === 'measured' ? 'Measured' : 'Observed'} / ${this.state.frame} / ${this.state.viewPerspective === 'firstPerson' ? '1P' : '3P'}`;
+
+    // 顶部状态栏内容
+    const frameLabel = this.state.frame === 'earth' ? 'Earth'
+      : this.state.frame === 'ship' ? 'Ship'
+      : 'Side-by-side';
+    const perspectiveLabel = this.state.viewPerspective === 'firstPerson' ? '1P' : '3P';
+    const modeLabel = this.state.viewMode === 'measured' ? 'Measured' : 'Observed';
+    let modeFull = modeLabel;
+    if (this.state.viewMode === 'observed') {
+      const terrellName = _terrellNames[this.state.terrellMode] || this.state.terrellMode;
+      modeFull += ` · ${terrellName}`;
+    }
+    const betaLabel = `β = ${this.state.beta.toFixed(3)}c`;
+    this.el.badge.textContent = `${modeFull} | ${frameLabel} | ${perspectiveLabel} | ${betaLabel}`;
   }
 }
