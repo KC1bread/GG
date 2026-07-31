@@ -5,7 +5,6 @@ import { PanelManager } from '../ui/PanelManager.js';
 import { DataLogger } from '../ui/DataLogger.js';
 import { Hud } from '../ui/Hud.js';
 import { ControlPanel } from '../ui/ControlPanel.js';
-import { MissionSystem } from '../ui/MissionSystem.js';
 import { ConceptPanel } from '../ui/ConceptPanel.js';
 import { QuizSystem } from '../ui/QuizSystem.js';
 import { MeasurementPreview } from '../ui/MeasurementPreview.js';
@@ -190,9 +189,6 @@ export class RelativisticVoyagerApp {
     this.controlPanel.onChange = () => this.onStateChanged();
     this.controlPanel.init();
 
-    this.missionSystem = new MissionSystem(this.state, this.logger);
-    this.missionSystem.init();
-
     this.conceptPanel = new ConceptPanel(this.logger);
     this.conceptPanel.init();
 
@@ -218,10 +214,8 @@ export class RelativisticVoyagerApp {
     }
     this.measurementPanelEls = {
       parallelLabel: document.getElementById('rod-panel-parallel-label'),
-      parallelBase: document.getElementById('rod-panel-parallel-base'),
       parallelCurrent: document.getElementById('rod-panel-parallel-current'),
       perpendicularLabel: document.getElementById('rod-panel-perpendicular-label'),
-      perpendicularBase: document.getElementById('rod-panel-perpendicular-base'),
       perpendicularCurrent: document.getElementById('rod-panel-perpendicular-current')
     };
 
@@ -239,22 +233,23 @@ export class RelativisticVoyagerApp {
       perpShip:      document.getElementById('comp-perp-ship'),
     };
 
-    // Draggable / minimizable / closable panels
+    // Bottom-bar based panel management (v2)
     this.panelManager = new PanelManager();
-    this.panelManager.init([
-      '#control-panel', '#hud-panel', '#measurement-panel', '#mission-panel',
-      '#concept-panel', '#quiz-panel', '#spacetime-panel', '#log-panel'
-    ]);
+    this.panelManager.init();
 
-    // Orbit speed slider
-    const orbitSlider = document.getElementById('orbit-speed-slider');
-    const orbitVal = document.getElementById('orbit-speed-val');
-    if (orbitSlider && orbitVal) {
-      orbitSlider.addEventListener('input', () => {
-        const v = parseFloat(orbitSlider.value);
-        this.solarSystem.orbitSpeedMultiplier = v;
-        orbitVal.textContent = v.toFixed(2) + '×';
+    // 飞船控制面板标题旁添加状态栏切换按钮
+    const cpBtnGroup = document.querySelector('#control-panel .panel-titlebar-btns');
+    if (cpBtnGroup) {
+      const toggleBadgeBtn = document.createElement('button');
+      toggleBadgeBtn.className = 'panel-action-btn';
+      toggleBadgeBtn.textContent = '●';
+      toggleBadgeBtn.title = '切换顶部信息状态栏';
+      toggleBadgeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const badge = document.getElementById('mode-badge');
+        if (badge) badge.classList.toggle('hidden');
       });
+      cpBtnGroup.insertBefore(toggleBadgeBtn, cpBtnGroup.firstChild);
     }
 
     // ── Terrell mode selector ──
@@ -623,10 +618,8 @@ export class RelativisticVoyagerApp {
     const perpendicularLength = previewInfo?.perpendicular?.currentLength ?? 5;
     const modeLabel = this.state.viewMode === 'measured' ? '测量模式' : '观察模式';
     this.measurementPanelEls.parallelLabel.textContent = `平行于运动方向 · ${modeLabel}`;
-    this.measurementPanelEls.parallelBase.textContent = '5.00';
     this.measurementPanelEls.parallelCurrent.textContent = parallelLength.toFixed(2);
     this.measurementPanelEls.perpendicularLabel.textContent = '垂直于运动方向';
-    this.measurementPanelEls.perpendicularBase.textContent = '5.00';
     this.measurementPanelEls.perpendicularCurrent.textContent = perpendicularLength.toFixed(2);
   }
 
@@ -964,7 +957,6 @@ export class RelativisticVoyagerApp {
     }
     this.hud.update();
     this.dualClock.update(r);
-    this.missionSystem.update();
     if (!isSideBySide) this.spacetimeDiagram.update();
 
     // ---- Final render --------------------------------------------------------
