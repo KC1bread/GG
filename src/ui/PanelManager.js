@@ -77,6 +77,9 @@ export class PanelManager {
 
     // 4. 全局监听点击置顶
     this._initBringToFront();
+
+    // 5. 窗口缩放后自动将越界面板拉回视口
+    this._initResizeHandler();
   }
 
   // ==========================================================================
@@ -536,6 +539,10 @@ export class PanelManager {
       panel.dataset._positioned = 'true';
     } else {
       panel.classList.remove('hidden');
+      // 窗口缩放后旧位置可能已超出视口 → 按当前窗口尺寸重新定位
+      if (!this._isWithinViewport(panel)) {
+        this._smartPosition(panel);
+      }
     }
 
     // 最小化状态下恢复
@@ -594,6 +601,34 @@ export class PanelManager {
   }
 
   // ==========================================================================
+  //  窗口缩放自适应（防止面板被挤出视口外）
+  // ==========================================================================
+
+  _initResizeHandler() {
+    window.addEventListener('resize', () => {
+      clearTimeout(this._resizeTimer);
+      this._resizeTimer = setTimeout(() => {
+        for (const panel of this.panels) {
+          if (panel._closed || panel.classList.contains('hidden')) continue;
+          if (!this._isWithinViewport(panel)) {
+            this._smartPosition(panel);
+          }
+        }
+      }, 120);
+    });
+  }
+
+  /** 检查面板矩形是否（基本）位于当前视口内 */
+  _isWithinViewport(panel) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const rect = panel.getBoundingClientRect();
+    const tol = 8; // 允许 8px 容差，避免边缘闪烁
+    return rect.left >= -tol && rect.top >= -tol
+        && rect.right <= vw + tol && rect.bottom <= vh + tol;
+  }
+
+  // ==========================================================================
   //  智能避让算法（重点）
   // ==========================================================================
 
@@ -622,12 +657,33 @@ export class PanelManager {
       }
     }
 
-    // 所有位置都重叠 → 使用默认位置，保证标题栏可见
+    // 所有位置都重叠（常见于小窗口）→ 使用默认位置并强制钳制在视口内，
+    // 保证面板主体不被挤出屏幕（而不只是标题栏可见）
     const defaultPos = candidates[0];
-    this._applyPosition(panel, defaultPos);
+    this._applyPosition(panel, this._clampToViewport(defaultPos, panelW, panelH));
+  }
 
-    // 如果标题栏被遮挡，调整到可见位置
-    this._ensureTitleBarVisible(panel);
+  /**
+   * 将面板位置钳制在当前视口内（小窗口时保证面板主体可见）
+   */
+  _clampToViewport(pos, panelW, panelH) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = 8;
+    const bottomBarH = 80;
+    const safeBottom = Math.max(margin, vh - bottomBarH - margin);
+
+    const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+    let left = finite(pos.left) ? pos.left : margin;
+    let top  = finite(pos.top)  ? pos.top  : margin;
+
+    const maxLeft = Math.max(margin, vw - panelW - margin);
+    const maxTop  = Math.max(margin, safeBottom - panelH);
+
+    left = Math.max(margin, Math.min(left, maxLeft));
+    top  = Math.max(margin, Math.min(top, maxTop));
+
+    return { left, top };
   }
 
   /**
@@ -813,28 +869,6 @@ export class PanelManager {
     panel.style.bottom = 'auto';
     panel.style.transform = 'none';
     panel.style.position = 'fixed';
-  }
-
-  /**
-   * 确保面板标题栏可见（不被遮挡）
-   */
-  _ensureTitleBarVisible(panel) {
-    const titleBar = panel.querySelector('.panel-titlebar');
-    if (!titleBar) return;
-
-    const titleBarH = titleBar.offsetHeight || 38;
-    const panelTop = parseInt(panel.style.top, 10) || 0;
-    const vh = window.innerHeight;
-
-    // 如果标题栏超出屏幕顶部
-    if (panelTop < 0) {
-      panel.style.top = '0px';
-    }
-
-    // 如果标题栏超出屏幕底部
-    if (panelTop > vh - titleBarH - 10) {
-      panel.style.top = (vh - titleBarH - 10) + 'px';
-    }
   }
 
   // ==========================================================================
