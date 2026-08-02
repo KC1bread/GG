@@ -76,10 +76,9 @@
         <canvas id="measurement-preview-canvas"></canvas>
       </div>
       <dl class="measurement-info">
-        <dt>平行尺</dt><dd id="rod-panel-parallel-label">沿运动方向</dd>
-        <dt>当前长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
-        <dt>垂直尺</dt><dd id="rod-panel-perpendicular-label">垂直于运动方向</dd>
-        <dt>当前长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
+        <dt>当前模式</dt><dd id="rod-panel-mode">Measured</dd>
+        <dt>当前平行尺长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
+        <dt>当前垂直尺长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
       </dl>
     </div>
     <!-- 双画布并列模式 (sideBySide) -->
@@ -91,8 +90,9 @@
             <canvas id="comparison-earth-canvas"></canvas>
           </div>
           <dl class="comparison-info">
-            <dt>平行尺当前长度</dt><dd id="comp-parallel-earth">5.00</dd>
-            <dt>垂直尺当前长度</dt><dd id="comp-perp-earth">5.00</dd>
+            <dt>当前模式</dt><dd id="comp-mode-earth">Measured</dd>
+            <dt>当前平行尺长度</dt><dd id="comp-parallel-earth">5.00</dd>
+            <dt>当前垂直尺长度</dt><dd id="comp-perp-earth">5.00</dd>
           </dl>
         </div>
         <div class="comparison-col">
@@ -101,8 +101,9 @@
             <canvas id="comparison-ship-canvas"></canvas>
           </div>
           <dl class="comparison-info">
-            <dt>平行尺当前长度</dt><dd id="comp-parallel-ship">5.00</dd>
-            <dt>垂直尺当前长度</dt><dd id="comp-perp-ship">5.00</dd>
+            <dt>当前模式</dt><dd id="comp-mode-ship">Measured</dd>
+            <dt>当前平行尺长度</dt><dd id="comp-parallel-ship">5.00</dd>
+            <dt>当前垂直尺长度</dt><dd id="comp-perp-ship">5.00</dd>
           </dl>
         </div>
       </div>
@@ -154,7 +155,6 @@
     <h2>Minkowski 时空图</h2>
     <div id="spacetime-single-view">
       <canvas id="spacetime-canvas" width="260" height="260"></canvas>
-      <p class="small-note">纵轴为时间 ct，横轴为空间 x；飞船速度越大，世界线越接近光锥。</p>
     </div>
     <div id="spacetime-dual-view" class="hidden">
       <div class="comparison-grid">
