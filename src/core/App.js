@@ -5,8 +5,6 @@ import { PanelManager } from '../ui/PanelManager.js';
 import { DataLogger } from '../ui/DataLogger.js';
 import { Hud } from '../ui/Hud.js';
 import { ControlPanel } from '../ui/ControlPanel.js';
-import { ConceptPanel } from '../ui/ConceptPanel.js';
-import { QuizSystem } from '../ui/QuizSystem.js';
 import { MeasurementPreview } from '../ui/MeasurementPreview.js';
 import { StarField } from '../visual/StarField.js';
 import { Spacecraft } from '../visual/Spacecraft.js';
@@ -47,6 +45,7 @@ export class RelativisticVoyagerApp {
       viewMode: 'measured',
       terrellMode: 'precise',   // 'lorentzOnly' | 'precise' | 'enhanced'
       viewPerspective: 'thirdPerson',
+      highSpeedEffectsGuideEnabled: false,
       paused: false,
       earthTime: 0,
       earthDistance: DEFAULT_TARGET_DISTANCE_LY,
@@ -189,12 +188,6 @@ export class RelativisticVoyagerApp {
     this.controlPanel.onChange = () => this.onStateChanged();
     this.controlPanel.init();
 
-    this.conceptPanel = new ConceptPanel(this.logger);
-    this.conceptPanel.init();
-
-    this.quizSystem = new QuizSystem(this.state, this.logger);
-    this.quizSystem.init();
-
     this.spacetimeDiagram = new SpacetimeDiagram(this.state);
     this.comparisonEarthSpacetime = null;
     this.comparisonShipSpacetime  = null;
@@ -262,6 +255,12 @@ export class RelativisticVoyagerApp {
     }
     this._terrellSelect = terrellSelect;
     this._terrellLabel = terrellLabel;
+    this.highSpeedEffectsGuideEl = document.getElementById('high-speed-effects-guide');
+    this.highSpeedGuideReadouts = {
+      beta: document.getElementById('high-speed-guide-beta'),
+      gamma: document.getElementById('high-speed-guide-gamma'),
+      shift: document.getElementById('high-speed-guide-shift')
+    };
 
     this.onStateChanged();
   }
@@ -338,6 +337,16 @@ export class RelativisticVoyagerApp {
       viewPerspective: mode,
       fov: this.camera.fov
     });
+  }
+
+  toggleHighSpeedEffectsGuide(forceValue) {
+    const nextValue = typeof forceValue === 'boolean'
+      ? forceValue
+      : !this.state.highSpeedEffectsGuideEnabled;
+    this.state.highSpeedEffectsGuideEnabled = nextValue;
+    this.panelManager?._updateCustomControlStates?.();
+    this.logger.log('high_speed_effects_guide_toggle', { enabled: nextValue });
+    return nextValue;
   }
 
   _toggleFreeLook() {
@@ -600,6 +609,7 @@ export class RelativisticVoyagerApp {
     this.hud.update();
     this.spacetimeDiagram.update();
     this._updateTerrellVisibility();
+    this.panelManager?._updateCustomControlStates?.();
   }
 
   _updateTerrellVisibility() {
@@ -857,6 +867,31 @@ export class RelativisticVoyagerApp {
     const vignette = document.getElementById('tunnel-vignette');
     if (vignette) {
       vignette.style.opacity = usePostProcess ? '0' : Math.min(0.92, actualBeta * 1.1);
+    }
+
+    const guideStrength = (
+      this.state.highSpeedEffectsGuideEnabled
+      && this.state.viewPerspective === 'firstPerson'
+      && this.currentSpeed > 0.001
+    )
+      ? THREE.MathUtils.smoothstep(actualBeta, 0.08, 0.32)
+      : 0;
+    const forwardShiftFactor = r.gamma * (1 + actualBeta);
+    const guide = this.highSpeedEffectsGuideEl;
+    if (guide) {
+      guide.style.opacity = guideStrength.toFixed(3);
+      guide.classList.toggle('active', guideStrength > 0.01);
+    }
+    if (this.highSpeedGuideReadouts.beta) {
+      this.highSpeedGuideReadouts.beta.textContent = actualBeta.toFixed(3);
+    }
+    if (this.highSpeedGuideReadouts.gamma) {
+      this.highSpeedGuideReadouts.gamma.textContent = r.gamma.toFixed(2);
+    }
+    if (this.highSpeedGuideReadouts.shift) {
+      this.highSpeedGuideReadouts.shift.textContent = guideStrength > 0.01
+        ? `${Math.max(1, forwardShiftFactor).toFixed(2)}×`
+        : '1.00×';
     }
 
     // 更新新版 StarField 的光行差、多普勒与头灯效应
