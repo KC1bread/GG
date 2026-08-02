@@ -20,6 +20,31 @@ export class SpacetimeDiagram {
     this._frameOverride = opts.frame || null;  // sideBySide 时覆盖参考系
     this.ctx = this.canvas.getContext('2d');
     this.dpr = window.devicePixelRatio || 1;
+    this._hitRegions = []; // 图例项 / 事件点可点击区域（供 Help 弹层使用）
+  }
+
+  /** 命中检测：返回点击到的图例/事件点 key（逻辑像素坐标），未命中返回 null */
+  getHitAt(x, y) {
+    const regions = this._hitRegions || [];
+    for (const r of regions) {
+      if (r.r !== undefined) {
+        const dx = x - r.x;
+        const dy = y - r.y;
+        if (dx * dx + dy * dy <= r.r * r.r) return r.key;
+      } else if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        return r.key;
+      }
+    }
+    return null;
+  }
+
+  /** 返回某 key 对应锚点（逻辑像素坐标，用于弹层定位） */
+  getAnchor(key) {
+    const regions = this._hitRegions || [];
+    for (const r of regions) {
+      if (r.key === key) return { x: r.ax, y: r.ay };
+    }
+    return null;
   }
 
   /** Returns the earth-time value at which the event point reaches the top of the diagram. */
@@ -31,6 +56,7 @@ export class SpacetimeDiagram {
     const ctx = this.ctx;
     const rectWidth  = this.canvas.clientWidth || parseInt(this.canvas.getAttribute('width')) || 260;
     const rectHeight = this.canvas.clientHeight || parseInt(this.canvas.getAttribute('height')) || 520;
+    this._hitRegions = [];
     if (rectWidth < 10 || rectHeight < 10) return;
 
     // DPR 适配：仅刷新缓冲尺寸，CSS 样式由 width:100% 或属性默认值控制
@@ -348,21 +374,23 @@ export class SpacetimeDiagram {
 
     // ═══════════════════════════════════════════════════════════
     //  图例（两个模式共用，同时线颜色随模式变化）
+    //  key 用于点击命中 → Help 弹层显示对应概念说明
     // ═══════════════════════════════════════════════════════════
     const legendData = [
-      { color: '#7dd3fc', width: 3,   dash: false, label: '地球世界线' },
-      { color: '#facc15', width: 3,   dash: false, label: '飞船世界线' },
-      { color: '#8899bb', width: 1.5, dash: true,  label: '光锥' },
+      { key: 'earthWorldline', color: '#7dd3fc', width: 3,   dash: false, label: '地球世界线' },
+      { key: 'shipWorldline',  color: '#facc15', width: 3,   dash: false, label: '飞船世界线' },
+      { key: 'lightCone',      color: '#8899bb', width: 1.5, dash: true,  label: '光锥' },
     ];
 
     if (isShip) {
-      legendData.push({ color: '#a8d8ff', width: 1.5, dash: true, label: '飞船系同时线' });
+      legendData.push({ key: 'simultaneity', color: '#a8d8ff', width: 1.5, dash: true, label: '飞船系同时线' });
     } else {
-      legendData.push({ color: '#b8a0e0', width: 1.5, dash: true, label: '地球系同时线' });
+      legendData.push({ key: 'simultaneity', color: '#b8a0e0', width: 1.5, dash: true, label: '地球系同时线' });
     }
 
     if (beta > 0.005) {
       legendData.push({
+        key: 'velocityRef',
         color: 'rgba(250, 204, 21, 0.45)',
         width: 1.2,
         dash: true,
@@ -416,8 +444,30 @@ export class SpacetimeDiagram {
       ctx.fillStyle = '#c8d6f0';
       ctx.textAlign = 'left';
       ctx.fillText(item.label, sx + 24, y);
+
+      // 记录点击命中区域（覆盖线条+文字）
+      const textW = ctx.measureText(item.label).width;
+      this._hitRegions.push({
+        key: item.key,
+        x: sx - 4,
+        y: y - legItemH / 2,
+        w: 18 + 8 + textW + 6,
+        h: legItemH,
+        ax: sx + 9 + textW / 2,
+        ay: y
+      });
     }
     ctx.restore();
+
+    // 事件点（白色圆点）可点击区域 —— 供 Help 弹层显示「事件点」概念
+    this._hitRegions.push({
+      key: 'eventPoint',
+      x: eventX,
+      y: eventY,
+      r: 16,
+      ax: eventX,
+      ay: eventY
+    });
   }
 
   /** 圆角矩形路径 */
