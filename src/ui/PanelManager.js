@@ -38,8 +38,7 @@ export class PanelManager {
         { id: 'log-panel',          label: '实验记录', isAttached: true },
       ],
       education:     [
-        { id: 'quiz-panel',         label: '概念问答' },
-        { id: 'concept-panel',      label: '概念解释' },
+        { id: 'high-speed-effects-guide', label: '高速视效概念释义', isToggle: true },
       ],
       visualization: [
         { id: 'spacetime-panel',    label: 'Minkowski时空图' },
@@ -55,8 +54,6 @@ export class PanelManager {
       'control-panel':     { right: 16, top: 16 },
       'hud-panel':         { right: 16, top: 16 },
       'measurement-panel': { right: 16, bottom: 228 },
-      'concept-panel':     { right: 16, bottom: 16 },
-      'quiz-panel':        { left: 392, bottom: 16 },
       'spacetime-panel':   { right: 392, bottom: 16 },
     };
 
@@ -93,7 +90,7 @@ export class PanelManager {
     for (const group of this.groups) {
       const panels = this.groupPanels[group.id] || [];
       for (const cfg of panels) {
-        if (cfg.isVr || cfg.isAttached) continue; // VR和附属面板不进入浮窗系统
+        if (cfg.isVr || cfg.isAttached || cfg.isToggle) continue; // VR/附属按钮/开关不进入浮窗系统
         const el = document.getElementById(cfg.id);
         if (!el) continue;
 
@@ -330,6 +327,20 @@ export class PanelManager {
           continue;
         }
 
+        if (cfg.isToggle) {
+          const btn = document.createElement('button');
+          btn.className = 'bottom-bar-btn bottom-bar-toggle-btn';
+          btn.textContent = cfg.label;
+          btn.dataset.toggleId = cfg.id;
+          btn.title = `切换 ${cfg.label}`;
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._toggleCustomControl(cfg.id);
+          });
+          itemsContainer.appendChild(btn);
+          continue;
+        }
+
         const btn = document.createElement('button');
         btn.className = 'bottom-bar-btn';
         btn.textContent = cfg.label;
@@ -377,6 +388,7 @@ export class PanelManager {
 
     document.body.appendChild(this.topBarEl);
     this.dockEl = this.topBarEl;
+    this._updateCustomControlStates();
 
     // ── 创建浮动菜单（实验记录：按钮锚定，向上纵向展开） ──
     this.attachedSubPanel = document.createElement('div');
@@ -458,6 +470,27 @@ export class PanelManager {
     const isCollapsed = this.topBarEl.classList.contains('bottom-bar-collapsed');
     tab.textContent = isCollapsed ? '⌄' : '⌃';
     tab.title = isCollapsed ? '展开底栏' : '收起底栏';
+  }
+
+  _toggleCustomControl(controlId) {
+    if (controlId === 'high-speed-effects-guide') {
+      window.rvApp?.toggleHighSpeedEffectsGuide?.();
+    }
+    this._updateCustomControlStates();
+  }
+
+  _updateCustomControlStates() {
+    if (!this.topBarEl) return;
+    const toggleButtons = this.topBarEl.querySelectorAll('[data-toggle-id]');
+    toggleButtons.forEach((btn) => {
+      const controlId = btn.dataset.toggleId;
+      if (controlId === 'high-speed-effects-guide') {
+        const enabled = !!window.rvApp?.state?.highSpeedEffectsGuideEnabled;
+        btn.classList.toggle('active', enabled);
+        btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        btn.title = enabled ? '关闭 高速视效概念释义' : '打开 高速视效概念释义';
+      }
+    });
   }
 
   // ==========================================================================
@@ -674,8 +707,6 @@ export class PanelManager {
       'control-panel':     'top-left',
       'hud-panel':         'top-right',
       'measurement-panel': 'bottom-right',
-      'concept-panel':     'bottom-right',
-      'quiz-panel':        'bottom-left',
       'spacetime-panel':   'bottom-right',
       'vr-status':         'bottom-left',
     };
@@ -1009,6 +1040,7 @@ export class PanelManager {
         btn.title = `打开 ${btn.textContent}`;
       }
     }
+    this._updateCustomControlStates();
   }
 
   // ==========================================================================

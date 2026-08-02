@@ -374,8 +374,6 @@ canvas { display: block; }
 .measurement-panel { right: 16px; bottom: 228px; width: 270px; transition: width 0.25s ease; }
 .measurement-panel.dual { width: 450px; }
 .mission-panel { left: 16px; bottom: 16px; width: 360px; }
-.concept-panel { right: 16px; bottom: 16px; width: 340px; }
-.quiz-panel { right: 16px; bottom: 16px; width: 300px; }
 .spacetime-panel { right: 392px; bottom: 16px; width: 280px; transition: width 0.25s ease; }
 .spacetime-panel.dual { width: 540px; }
 .spacetime-dual-wrap {
@@ -745,10 +743,6 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   transition: opacity 0.4s ease;
 }
 
-.tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.tabs button { font-size: 12px; padding: 5px 8px; }
-.tabs button.active { background: rgba(250, 204, 21, 0.18); border-color: rgba(250, 204, 21, 0.5); }
-
 .progress {
   height: 10px;
   border-radius: 999px;
@@ -763,11 +757,6 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   background: linear-gradient(90deg, #7dd3fc, #facc15);
 }
 
-#quiz-options { display: grid; gap: 4px; margin: 4px 0 2px; }
-#quiz-options button { text-align: left; padding: 4px 8px; font-size: 12px; }
-#quiz-feedback { min-height: 22px; color: #fff6b2; font-size: 12px; line-height: 1.4; margin: 2px 0; padding: 0; }
-#quiz-question { font-size: 13px; line-height: 1.5; margin: 4px 0 2px; }
-#next-quiz-btn { font-size: 12px; padding: 3px 10px; margin-top: 2px; }
 .small-note { color: #9fb0d0; font-size: 12px !important; }
 
 /* ---- Planet info card ---- */
@@ -886,10 +875,115 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   transition: opacity 0.25s ease-out;
 }
 
+.high-speed-effects-guide {
+  position: fixed;
+  inset: 24px;
+  pointer-events: none;
+  z-index: 11;
+  opacity: 0;
+  transition: opacity 0.28s ease-out;
+}
+
+.high-speed-effects-guide.active {
+  opacity: 1;
+}
+
+.guide-frame {
+  position: absolute;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  background: linear-gradient(180deg, rgba(7, 17, 31, 0.78), rgba(4, 10, 20, 0.55));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 8px 28px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.guide-frame::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid rgba(125, 211, 252, 0.08);
+  pointer-events: none;
+}
+
+.guide-frame-top {
+  left: 13%;
+  right: 13%;
+  top: 0;
+  min-height: 84px;
+  padding: 12px 20px 14px;
+  border-radius: 18px 18px 12px 12px;
+}
+
+.guide-frame-right {
+  top: 20%;
+  right: 0;
+  width: min(320px, 28vw);
+  min-height: 180px;
+  padding: 16px 16px 16px 18px;
+  border-radius: 14px 18px 18px 14px;
+}
+
+.guide-frame-bottom {
+  left: 18%;
+  right: 18%;
+  bottom: 0;
+  min-height: 92px;
+  padding: 14px 20px 16px;
+  border-radius: 12px 12px 18px 18px;
+}
+
+.guide-chip {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 211, 252, 0.26);
+  background: rgba(125, 211, 252, 0.12);
+  color: #d8efff;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.guide-frame p {
+  margin: 0;
+  color: rgba(232, 241, 255, 0.9);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.guide-corner-stats {
+  position: absolute;
+  left: 0;
+  bottom: 118px;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  min-width: 170px;
+  border-radius: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  background: rgba(7, 17, 31, 0.66);
+  color: rgba(200, 214, 240, 0.88);
+  font-size: 11px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.guide-corner-stats strong {
+  color: #ffffff;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 1200px) {
+  .spacetime-panel { display: none; }
   .quiz-panel { left: 16px; bottom: 210px; }
   .concept-panel { width: 320px; }
   .measurement-panel { right: 16px; bottom: 228px; }
+  .guide-frame-right {
+    width: min(280px, 34vw);
+  }
 }
 
 @media (max-width: 760px) {
@@ -898,4 +992,5 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   #app-root { height: 60vh; }
   #app-root canvas { height: 60vh !important; }
   .mode-badge { top: 8px; }
+  .high-speed-effects-guide { display: none; }
 }

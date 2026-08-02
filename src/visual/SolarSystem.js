@@ -1514,15 +1514,9 @@ export class SolarSystem {
       });
     }
 
+   
     // ── Milky Way skybox ─────────────────────────────────────────────────────
-    loadTex('PIT/8k_stars_milky_way.jpg', (tex) => {
-      // Set as equirectangular scene background via the group's parent scene
-      const scene = this.group.parent;
-      if (scene && scene.isScene) {
-        tex.mapping = THREE.EquirectangularReflectionMapping;
-        scene.background = tex;
-      }
-    });
+    
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
