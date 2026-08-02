@@ -5,9 +5,6 @@ import { PanelManager } from '../ui/PanelManager.js';
 import { DataLogger } from '../ui/DataLogger.js';
 import { Hud } from '../ui/Hud.js';
 import { ControlPanel } from '../ui/ControlPanel.js';
-import { MissionSystem } from '../ui/MissionSystem.js';
-import { ConceptPanel } from '../ui/ConceptPanel.js';
-import { QuizSystem } from '../ui/QuizSystem.js';
 import { MeasurementPreview } from '../ui/MeasurementPreview.js';
 import { StarField } from '../visual/StarField.js';
 import { Spacecraft } from '../visual/Spacecraft.js';
@@ -48,6 +45,7 @@ export class RelativisticVoyagerApp {
       viewMode: 'measured',
       terrellMode: 'precise',   // 'lorentzOnly' | 'precise' | 'enhanced'
       viewPerspective: 'thirdPerson',
+      highSpeedEffectsGuideEnabled: false,
       paused: false,
       earthTime: 0,
       earthDistance: DEFAULT_TARGET_DISTANCE_LY,
@@ -190,16 +188,9 @@ export class RelativisticVoyagerApp {
     this.controlPanel.onChange = () => this.onStateChanged();
     this.controlPanel.init();
 
-    this.missionSystem = new MissionSystem(this.state, this.logger);
-    this.missionSystem.init();
-
-    this.conceptPanel = new ConceptPanel(this.logger);
-    this.conceptPanel.init();
-
-    this.quizSystem = new QuizSystem(this.state, this.logger);
-    this.quizSystem.init();
-
     this.spacetimeDiagram = new SpacetimeDiagram(this.state);
+    this.comparisonEarthSpacetime = null;
+    this.comparisonShipSpacetime  = null;
 
     // ── 双测量尺 3D 预览 ──
     this.measurementPreviewCanvas = document.getElementById('measurement-preview-canvas');
@@ -216,10 +207,8 @@ export class RelativisticVoyagerApp {
     }
     this.measurementPanelEls = {
       parallelLabel: document.getElementById('rod-panel-parallel-label'),
-      parallelBase: document.getElementById('rod-panel-parallel-base'),
       parallelCurrent: document.getElementById('rod-panel-parallel-current'),
       perpendicularLabel: document.getElementById('rod-panel-perpendicular-label'),
-      perpendicularBase: document.getElementById('rod-panel-perpendicular-base'),
       perpendicularCurrent: document.getElementById('rod-panel-perpendicular-current')
     };
 
@@ -237,22 +226,23 @@ export class RelativisticVoyagerApp {
       perpShip:      document.getElementById('comp-perp-ship'),
     };
 
-    // Draggable / minimizable / closable panels
+    // Bottom-bar based panel management (v2)
     this.panelManager = new PanelManager();
-    this.panelManager.init([
-      '#control-panel', '#hud-panel', '#measurement-panel', '#mission-panel',
-      '#concept-panel', '#quiz-panel', '#spacetime-panel', '#log-panel'
-    ]);
+    this.panelManager.init();
 
-    // Orbit speed slider
-    const orbitSlider = document.getElementById('orbit-speed-slider');
-    const orbitVal = document.getElementById('orbit-speed-val');
-    if (orbitSlider && orbitVal) {
-      orbitSlider.addEventListener('input', () => {
-        const v = parseFloat(orbitSlider.value);
-        this.solarSystem.orbitSpeedMultiplier = v;
-        orbitVal.textContent = v.toFixed(2) + '×';
+    // 飞船控制面板标题旁添加状态栏切换按钮
+    const cpBtnGroup = document.querySelector('#control-panel .panel-titlebar-btns');
+    if (cpBtnGroup) {
+      const toggleBadgeBtn = document.createElement('button');
+      toggleBadgeBtn.className = 'panel-action-btn';
+      toggleBadgeBtn.textContent = '●';
+      toggleBadgeBtn.title = '切换顶部信息状态栏';
+      toggleBadgeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const badge = document.getElementById('mode-badge');
+        if (badge) badge.classList.toggle('hidden');
       });
+      cpBtnGroup.insertBefore(toggleBadgeBtn, cpBtnGroup.firstChild);
     }
 
     // ── Terrell mode selector ──
@@ -265,6 +255,12 @@ export class RelativisticVoyagerApp {
     }
     this._terrellSelect = terrellSelect;
     this._terrellLabel = terrellLabel;
+    this.highSpeedEffectsGuideEl = document.getElementById('high-speed-effects-guide');
+    this.highSpeedGuideReadouts = {
+      beta: document.getElementById('high-speed-guide-beta'),
+      gamma: document.getElementById('high-speed-guide-gamma'),
+      shift: document.getElementById('high-speed-guide-shift')
+    };
 
     this.onStateChanged();
   }
@@ -341,6 +337,16 @@ export class RelativisticVoyagerApp {
       viewPerspective: mode,
       fov: this.camera.fov
     });
+  }
+
+  toggleHighSpeedEffectsGuide(forceValue) {
+    const nextValue = typeof forceValue === 'boolean'
+      ? forceValue
+      : !this.state.highSpeedEffectsGuideEnabled;
+    this.state.highSpeedEffectsGuideEnabled = nextValue;
+    this.panelManager?._updateCustomControlStates?.();
+    this.logger.log('high_speed_effects_guide_toggle', { enabled: nextValue });
+    return nextValue;
   }
 
   _toggleFreeLook() {
@@ -603,6 +609,7 @@ export class RelativisticVoyagerApp {
     this.hud.update();
     this.spacetimeDiagram.update();
     this._updateTerrellVisibility();
+    this.panelManager?._updateCustomControlStates?.();
   }
 
   _updateTerrellVisibility() {
@@ -621,10 +628,8 @@ export class RelativisticVoyagerApp {
     const perpendicularLength = previewInfo?.perpendicular?.currentLength ?? 5;
     const modeLabel = this.state.viewMode === 'measured' ? '测量模式' : '观察模式';
     this.measurementPanelEls.parallelLabel.textContent = `平行于运动方向 · ${modeLabel}`;
-    this.measurementPanelEls.parallelBase.textContent = '5.00';
     this.measurementPanelEls.parallelCurrent.textContent = parallelLength.toFixed(2);
     this.measurementPanelEls.perpendicularLabel.textContent = '垂直于运动方向';
-    this.measurementPanelEls.perpendicularBase.textContent = '5.00';
     this.measurementPanelEls.perpendicularCurrent.textContent = perpendicularLength.toFixed(2);
   }
 
@@ -797,7 +802,8 @@ export class RelativisticVoyagerApp {
     if (!this.state.paused && this.currentSpeed > 0.001) {
       this.state.earthTime +=
         dt * this.state.timeScale * Math.max(0.2, this.state.beta * 12);
-      if (this.state.earthTime > r.etaEarth && Number.isFinite(r.etaEarth)) {
+      const maxTime = this.spacetimeDiagram.getMaxTime();
+      if (Number.isFinite(maxTime) && this.state.earthTime >= maxTime) {
         this.state.earthTime = 0;
         this.logger.log('arrival_loop_reset', { beta: this.state.beta, gamma: r.gamma });
       }
@@ -863,6 +869,31 @@ export class RelativisticVoyagerApp {
       vignette.style.opacity = usePostProcess ? '0' : Math.min(0.92, actualBeta * 1.1);
     }
 
+    const guideStrength = (
+      this.state.highSpeedEffectsGuideEnabled
+      && this.state.viewPerspective === 'firstPerson'
+      && this.currentSpeed > 0.001
+    )
+      ? THREE.MathUtils.smoothstep(actualBeta, 0.08, 0.32)
+      : 0;
+    const forwardShiftFactor = r.gamma * (1 + actualBeta);
+    const guide = this.highSpeedEffectsGuideEl;
+    if (guide) {
+      guide.style.opacity = guideStrength.toFixed(3);
+      guide.classList.toggle('active', guideStrength > 0.01);
+    }
+    if (this.highSpeedGuideReadouts.beta) {
+      this.highSpeedGuideReadouts.beta.textContent = actualBeta.toFixed(3);
+    }
+    if (this.highSpeedGuideReadouts.gamma) {
+      this.highSpeedGuideReadouts.gamma.textContent = r.gamma.toFixed(2);
+    }
+    if (this.highSpeedGuideReadouts.shift) {
+      this.highSpeedGuideReadouts.shift.textContent = guideStrength > 0.01
+        ? `${Math.max(1, forwardShiftFactor).toFixed(2)}×`
+        : '1.00×';
+    }
+
     // 更新新版 StarField 的光行差、多普勒与头灯效应
     let visualBeta = Math.max(0.0001, actualBeta);
     const starfieldVelocityDir = this._velocityForward.clone().normalize();
@@ -906,7 +937,7 @@ export class RelativisticVoyagerApp {
     });
     this._updateMeasurementPanel(r);
 
-    // ── 单画布 / 双画布切换 ──
+    // ── 统一面板：单画布/双画布切换（双测量尺 + 时空图） ──
     const isSideBySide = this.state.frame === 'sideBySide';
     const measPanel = document.getElementById('measurement-panel');
     const measSingle = document.getElementById('measurement-single-view');
@@ -914,6 +945,13 @@ export class RelativisticVoyagerApp {
     if (measPanel)  measPanel.classList.toggle('dual', isSideBySide);
     if (measSingle) measSingle.classList.toggle('hidden', isSideBySide);
     if (measDual)   measDual.classList.toggle('hidden', !isSideBySide);
+
+    const stPanel = document.getElementById('spacetime-panel');
+    const stSingle = document.getElementById('spacetime-single-view');
+    const stDual   = document.getElementById('spacetime-dual-view');
+    if (stPanel)  stPanel.classList.toggle('dual', isSideBySide);
+    if (stSingle) stSingle.classList.toggle('hidden', isSideBySide);
+    if (stDual)   stDual.classList.toggle('hidden', !isSideBySide);
 
     // ── 并列对比 ──
     if (isSideBySide) {
@@ -929,6 +967,18 @@ export class RelativisticVoyagerApp {
         if (this.comparisonEls.perpEarth)     this.comparisonEls.perpEarth.textContent     = '5.00';
         if (this.comparisonEls.perpShip)      this.comparisonEls.perpShip.textContent      = '5.00';
       }
+
+      // ── 侧边栏双时空图（懒加载） ──
+      if (!this.comparisonEarthSpacetime) {
+        const earthCanvas = document.getElementById('spacetime-earth-canvas');
+        const shipCanvas  = document.getElementById('spacetime-ship-canvas');
+        if (earthCanvas && shipCanvas) {
+          this.comparisonEarthSpacetime = new SpacetimeDiagram(this.state, { canvas: earthCanvas, frame: 'earth' });
+          this.comparisonShipSpacetime  = new SpacetimeDiagram(this.state, { canvas: shipCanvas, frame: 'ship' });
+        }
+      }
+      this.comparisonEarthSpacetime?.update();
+      this.comparisonShipSpacetime?.update();
     }
 
     // Cockpit interior
@@ -942,8 +992,7 @@ export class RelativisticVoyagerApp {
     }
     this.hud.update();
     this.dualClock.update(r);
-    this.missionSystem.update();
-    this.spacetimeDiagram.update();
+    if (!isSideBySide) this.spacetimeDiagram.update();
 
     // ---- Final render --------------------------------------------------------
     if (usePostProcess) {
