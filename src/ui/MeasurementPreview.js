@@ -56,8 +56,58 @@ export class MeasurementPreview {
     this._pointerId = null;
     this._lastPointerX = 0;
     this._lastPointerY = 0;
+    this._downClientX = 0;
+    this._downClientY = 0;
 
     this._bindDrag();
+  }
+
+  /**
+   * 点击命中检测：从鼠标位置发射射线，判断是否命中平行尺或垂直尺。
+   * 仅用于「点击弹解说」，不参与拖拽。
+   * @param {MouseEvent} e 画布上的点击事件
+   * @returns {{key:'parallel'|'perpendicular', screenX:number, screenY:number}|null}
+   */
+  getHitRod(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return null;
+    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this._raycaster ||= new THREE.Raycaster();
+    this._raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+
+    const targets = [];
+    if (this.parallelRod?.group?.visible) {
+      this.parallelRod.group.traverse((obj) => { if (obj.isMesh) targets.push(obj); });
+    }
+    if (this.perpendicularRod?.group?.visible) {
+      this.perpendicularRod.group.traverse((obj) => { if (obj.isMesh) targets.push(obj); });
+    }
+    if (!targets.length) return null;
+
+    const hits = this._raycaster.intersectObjects(targets, false);
+    if (!hits.length) return null;
+
+    // 取最近命中，判断属于哪根杆
+    const first = hits[0];
+    let node = first.object;
+    let key = null;
+    while (node) {
+      if (node === this.parallelRod.group) { key = 'parallel'; break; }
+      if (node === this.perpendicularRod.group) { key = 'perpendicular'; break; }
+      node = node.parent;
+    }
+    if (!key) return null;
+
+    // 将命中点投影到屏幕坐标（弹层锚点）
+    const worldPoint = first.point.clone();
+    const screenPos = worldPoint.clone().project(this.camera);
+    return {
+      key,
+      screenX: (screenPos.x + 1) / 2 * rect.width,
+      screenY: (1 - screenPos.y) / 2 * rect.height
+    };
   }
 
   _bindDrag() {
@@ -68,6 +118,8 @@ export class MeasurementPreview {
       this._pointerId = e.pointerId;
       this._lastPointerX = e.clientX;
       this._lastPointerY = e.clientY;
+      this._downClientX = e.clientX;
+      this._downClientY = e.clientY;
       this.canvas.setPointerCapture?.(e.pointerId);
     });
 
@@ -79,6 +131,10 @@ export class MeasurementPreview {
       this._lastPointerX = e.clientX;
       this._lastPointerY = e.clientY;
 
+      // 位移超过阈值 → 视为拖拽（点击不触发旋转）
+      if (Math.abs(e.clientX - this._downClientX) > 5 || Math.abs(e.clientY - this._downClientY) > 5) {
+        this._dragMoved = true;
+      }
       this.dragYaw = THREE.MathUtils.clamp(this.dragYaw + dx * 0.0045, -this.maxDrag, this.maxDrag);
       this.dragPitch = THREE.MathUtils.clamp(this.dragPitch + dy * 0.0045, -this.maxDrag, this.maxDrag);
     });
@@ -89,7 +145,6 @@ export class MeasurementPreview {
       this._pointerId = null;
       this.canvas.releasePointerCapture?.(e.pointerId);
     };
-
     this.canvas.addEventListener('pointerup', endDrag);
     this.canvas.addEventListener('pointercancel', endDrag);
   }
