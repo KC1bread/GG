@@ -10,13 +10,14 @@ export class ControlPanel {
     this.frameSelect = document.getElementById('frame-select');
     this.viewModeSelect = document.getElementById('view-mode-select');
     this.perspectiveSelect = document.getElementById('perspective-select');
-    this.pauseBtn = document.getElementById('pause-btn');
     this.resetBtn = document.getElementById('reset-btn');
     this.startBtn = document.getElementById('start-btn');
 
     this.startBtn.addEventListener('click', () => {
-      document.querySelectorAll('.hidden').forEach(el => el.classList.remove('hidden'));
+      // 隐藏介绍面板，显示底部底栏
       document.getElementById('intro-panel').classList.add('hidden');
+      document.getElementById('mode-badge').classList.remove('hidden');
+      window.rvApp?.panelManager?.showBottomBar();
       this.logger.log('start');
     });
 
@@ -57,12 +58,6 @@ export class ControlPanel {
       }
       this.logger.log('perspective_change', this.snapshot());
       this.onChange();
-    });
-
-    this.pauseBtn.addEventListener('click', () => {
-      this.state.paused = !this.state.paused;
-      this.pauseBtn.textContent = this.state.paused ? '继续' : '暂停';
-      this.logger.log('pause_toggle', { paused: this.state.paused, ...this.snapshot() });
     });
 
     this.resetBtn.addEventListener('click', () => {
