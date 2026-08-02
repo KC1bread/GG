@@ -13,6 +13,8 @@ import { Spacecraft } from '../visual/Spacecraft.js';
 import { CockpitInterior } from '../visual/CockpitInterior.js';
 import { DualClockPanel } from '../ui/DualClockPanel.js';
 import { SpacetimeDiagram } from '../visual/SpacetimeDiagram.js';
+import { SpacetimeHelp } from '../ui/SpacetimeHelp.js';
+import { MeasurementHelp } from '../ui/MeasurementHelp.js';
 import { SolarSystem, PLANET_INFO } from '../visual/SolarSystem.js';
 import { addReferenceScene } from '../visual/SceneObjects.js';
 import { EngineAudio } from '../audio/EngineAudio.js';
@@ -213,11 +215,17 @@ export class RelativisticVoyagerApp {
       });
     }
     this.measurementPanelEls = {
-      parallelLabel: document.getElementById('rod-panel-parallel-label'),
+      mode: document.getElementById('rod-panel-mode'),
       parallelCurrent: document.getElementById('rod-panel-parallel-current'),
-      perpendicularLabel: document.getElementById('rod-panel-perpendicular-label'),
       perpendicularCurrent: document.getElementById('rod-panel-perpendicular-current')
     };
+
+    // ── 双测量尺交互式概念解说（点击杆/标签弹卡，仅单模式） ──
+    this.measurementHelp = new MeasurementHelp();
+    this.measurementHelp.init();
+    if (this.measurementPreviewCanvas && this.measurementPreview) {
+      this.measurementHelp.attachPreview(this.measurementPreviewCanvas, this.measurementPreview);
+    }
 
     // ── 并列对比面板（sideBySide 模式） ──
     this.comparisonEarthCanvas = document.getElementById('comparison-earth-canvas');
@@ -227,6 +235,8 @@ export class RelativisticVoyagerApp {
       this.comparisonShipPreview  = new MeasurementPreview(this.comparisonShipCanvas);
     }
     this.comparisonEls = {
+      modeEarth:     document.getElementById('comp-mode-earth'),
+      modeShip:      document.getElementById('comp-mode-ship'),
       parallelEarth: document.getElementById('comp-parallel-earth'),
       perpEarth:     document.getElementById('comp-perp-earth'),
       parallelShip:  document.getElementById('comp-parallel-ship'),
@@ -236,6 +246,15 @@ export class RelativisticVoyagerApp {
     // Bottom-bar based panel management (v2)
     this.panelManager = new PanelManager();
     this.panelManager.init();
+
+    // ── 时空图交互式概念说明（ⓘ + 图例点击） ──
+    this.spacetimeHelp = new SpacetimeHelp(this.state);
+    this.spacetimeHelp.init();
+    if (this.spacetimeDiagram && this.spacetimeDiagram.canvas) {
+      this.spacetimeDiagram.canvas.addEventListener('click', (e) => {
+        this.spacetimeHelp?.onDiagramClick(e, this.spacetimeDiagram);
+      });
+    }
 
     // 飞船控制面板标题旁添加状态栏切换按钮
     const cpBtnGroup = document.querySelector('#control-panel .panel-titlebar-btns');
@@ -599,6 +618,13 @@ export class RelativisticVoyagerApp {
     this._updateMeasurementPanel(computed);
     this.hud.update();
     this.spacetimeDiagram.update();
+    this.spacetimeHelp?.onFrameChange();
+    // 测量尺弹层：同步显示模式（平行尺标题颜色 黄=Measured / 蓝=Observed）
+    this.measurementHelp?.setViewMode(this.state.viewMode);
+    // 并列模式不启用测量尺弹层
+    if (this.state.frame === 'sideBySide') {
+      this.measurementHelp?.hide();
+    }
     this._updateTerrellVisibility();
   }
 
@@ -616,11 +642,17 @@ export class RelativisticVoyagerApp {
     const parallelLength = previewInfo?.parallel?.currentLength
       ?? 5 * (relativityState?.lengthRatio ?? 1);
     const perpendicularLength = previewInfo?.perpendicular?.currentLength ?? 5;
-    const modeLabel = this.state.viewMode === 'measured' ? '测量模式' : '观察模式';
-    this.measurementPanelEls.parallelLabel.textContent = `平行于运动方向 · ${modeLabel}`;
+
+    if (this.measurementPanelEls.mode) this.measurementPanelEls.mode.textContent = this._modeLabel();
     this.measurementPanelEls.parallelCurrent.textContent = parallelLength.toFixed(2);
-    this.measurementPanelEls.perpendicularLabel.textContent = '垂直于运动方向';
     this.measurementPanelEls.perpendicularCurrent.textContent = perpendicularLength.toFixed(2);
+  }
+
+  /** 当前显示模式 + Terrell 档位（简略文字，仅双测量尺面板使用） */
+  _modeLabel() {
+    if (this.state.viewMode !== 'observed') return 'Measured';
+    const names = { lorentzOnly: '纯长度收缩', precise: 'P-T 精确', enhanced: '增强教学' };
+    return `Observed · ${names[this.state.terrellMode] || this.state.terrellMode}`;
   }
 
   // ---- Terrell transform application -----------------------------------------
@@ -921,12 +953,21 @@ export class RelativisticVoyagerApp {
     // ── 并列对比 ──
     if (isSideBySide) {
       if (this.comparisonEarthPreview && this.comparisonShipPreview) {
-        const earthRodState = { ...rodPhysicsState, frame: 'earth' };
-        const shipRodState  = { ...rodPhysicsState, frame: 'ship' };
+        // 并列模式不能直接用 effectiveMode（它基于 state.frame='sideBySide' 恒为 lorentzOnly），
+        // 需按每个画布的实际参考系单独计算：地球画布 → observed 时启用 Terrell，飞船画布 → 恒不转
+        const observed = this.state.viewMode === 'observed';
+        const earthRodState = {
+          ...rodPhysicsState,
+          frame: 'earth',
+          terrellMode: observed ? this.state.terrellMode : 'lorentzOnly'
+        };
+        const shipRodState = { ...rodPhysicsState, frame: 'ship', terrellMode: 'lorentzOnly' };
         this.comparisonEarthPreview.update({ physicsState: earthRodState, shipPosition: this.shipPosition, visible: true });
         this.comparisonShipPreview.update({ physicsState: shipRodState, shipPosition: this.shipPosition, visible: true });
 
         const earthParallel = 5 * (lengthContractionRatio(this.state.beta));
+        if (this.comparisonEls.modeEarth)    this.comparisonEls.modeEarth.textContent    = this._modeLabel();
+        if (this.comparisonEls.modeShip)     this.comparisonEls.modeShip.textContent     = this._modeLabel();
         if (this.comparisonEls.parallelEarth) this.comparisonEls.parallelEarth.textContent = earthParallel.toFixed(2);
         if (this.comparisonEls.parallelShip)  this.comparisonEls.parallelShip.textContent  = '5.00';
         if (this.comparisonEls.perpEarth)     this.comparisonEls.perpEarth.textContent     = '5.00';
