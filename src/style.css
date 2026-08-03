@@ -977,7 +977,6 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
 }
 
 @media (max-width: 1200px) {
-  .spacetime-panel { display: none; }
   .quiz-panel { left: 16px; bottom: 210px; }
   .concept-panel { width: 320px; }
   .measurement-panel { right: 16px; bottom: 228px; }
