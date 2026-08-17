@@ -109,6 +109,12 @@ export class RelativisticVoyagerApp {
 
     this._smoothCamPos = new THREE.Vector3();
     this.clock = new THREE.Clock();
+
+    // Terrell 临时对象复用（避免每帧 GC 分配）
+    this._terrellVelocityDir = new THREE.Vector3();
+    this._terrellPlanetPos = new THREE.Vector3();
+    this._terrellViewDir = new THREE.Vector3();
+    this._terrellActive = undefined; // undefined | true | false（β 跨阈值状态）
   }
 
   // ============================================================================
@@ -508,6 +514,9 @@ export class RelativisticVoyagerApp {
       this.measurementPreview?.resize();
       this.comparisonEarthPreview?.resize();
       this.comparisonShipPreview?.resize();
+      this.spacetimeDiagram?.resize();
+      this.comparisonEarthSpacetime?.resize();
+      this.comparisonShipSpacetime?.resize();
     });
   }
 
@@ -673,43 +682,63 @@ export class RelativisticVoyagerApp {
     const isObserved = this.state.viewMode === 'observed';
     const effectiveMode = (isObserved && isEarthFrame) ? mode : 'lorentzOnly';
 
-    const velocityDir = new THREE.Vector3(0, 0, -1)
+    // ── β 跨阈值翻转：非活动稳态（β≈0）无需每帧重置矩阵 ──
+    const terrellActive = beta >= 0.0001;
+    if (!terrellActive) {
+      if (this._terrellActive !== false) {
+        this._terrellActive = false;
+        // 从活动翻转到非活动：一次性把矩阵重置为 identity
+        if (this.solarSystem && this.solarSystem.planets) {
+          for (const planet of this.solarSystem.planets) {
+            for (const child of planet.group.children) {
+              if (child.isMesh) {
+                child.matrix.identity();
+                child.matrixAutoUpdate = true;
+              }
+            }
+          }
+        }
+        if (this.spacecraft.terrellGroup) {
+          this.spacecraft.terrellGroup.matrix.identity();
+          this.spacecraft.terrellGroup.matrixAutoUpdate = true;
+        }
+      }
+      return;
+    }
+
+    this._terrellActive = true;
+
+    const velocityDir = this._terrellVelocityDir.set(0, 0, -1)
       .applyQuaternion(this.spacecraft.group.quaternion)
       .normalize();
 
     if (this.solarSystem && this.solarSystem.planets) {
       for (const planet of this.solarSystem.planets) {
-        const planetWorldPos = new THREE.Vector3();
+        const planetWorldPos = this._terrellPlanetPos;
         planet.group.getWorldPosition(planetWorldPos);
-        const viewDir = this._smoothCamPos.clone().sub(planetWorldPos).normalize();
+        const viewDir = this._terrellViewDir
+          .subVectors(this._smoothCamPos, planetWorldPos)
+          .normalize();
 
-        if (beta < 0.0001) {
-          planet.group.children.forEach(child => {
-            if (child.isMesh) {
-              child.matrix.identity();
-              child.matrixAutoUpdate = true;
-            }
-          });
-        } else {
-          const transform = terrellTransformMatrix(
-            beta, viewDir, velocityDir, effectiveMode
-          );
-          planet.group.children.forEach(child => {
-            if (child.isMesh) {
-              child.updateMatrix();
-              const local = child.matrix.clone();
-              child.matrix.multiplyMatrices(transform, local);
-              child.matrixAutoUpdate = false;
-            }
-          });
+        const transform = terrellTransformMatrix(
+          beta, viewDir, velocityDir, effectiveMode
+        );
+        for (const child of planet.group.children) {
+          if (child.isMesh) {
+            child.updateMatrix();
+            child.matrix.premultiply(transform); // 等价于 multiplyMatrices(transform, child.matrix)，省去 clone
+            child.matrixAutoUpdate = false;
+          }
         }
       }
     }
 
-    if (this.state.viewPerspective === 'thirdPerson' && isEarthFrame && beta >= 0.0001) {
-      const shipWorldPos = new THREE.Vector3();
+    if (this.state.viewPerspective === 'thirdPerson' && isEarthFrame) {
+      const shipWorldPos = this._terrellPlanetPos;
       this.spacecraft.group.getWorldPosition(shipWorldPos);
-      const viewDir = this._smoothCamPos.clone().sub(shipWorldPos).normalize();
+      const viewDir = this._terrellViewDir
+        .subVectors(this._smoothCamPos, shipWorldPos)
+        .normalize();
 
       const transform = terrellTransformMatrix(
         beta, viewDir, velocityDir, effectiveMode
@@ -728,6 +757,19 @@ export class RelativisticVoyagerApp {
   // ---- Main update loop ------------------------------------------------------
 
   update() {
+    // ── TEMP 性能探测（定位卡顿根因用，测完删除） ──
+    if (!this._perf) {
+      this._perf = { sections: {}, frames: 0, lastLog: performance.now() };
+    }
+    this._perf._frameStart = performance.now();
+    this._perf._markT = this._perf._frameStart;
+    const _perfMark = (name) => {
+      const now = performance.now();
+      const d = now - this._perf._markT;
+      this._perf.sections[name] = (this._perf.sections[name] || 0) + d;
+      this._perf._markT = now;
+    };
+
     const dt = Math.min(0.05, this.clock.getDelta());
     const r = computeRelativityState(this.state);
     const ratio = lengthContractionRatio(this.state.beta);
@@ -824,6 +866,8 @@ export class RelativisticVoyagerApp {
       }
     }
 
+    _perfMark('flight');
+
     // Apply ship transform
     this.spacecraft.setWorldPosition(
       this.shipPosition.x, this.shipPosition.y, this.shipPosition.z
@@ -868,6 +912,8 @@ export class RelativisticVoyagerApp {
       this.camera.position.copy(this._smoothCamPos);
       this.camera.lookAt(this.shipPosition);
     }
+
+    _perfMark('camera');
 
     // ---- Relativistic visual effects & Post-process ----------------------------
     const crosshair = document.getElementById('crosshair');
@@ -932,6 +978,8 @@ export class RelativisticVoyagerApp {
     this.starField.setRelativisticState(visualBeta, starfieldVelocityDir);
     // =========================================================================
 
+    _perfMark('fx');
+
     // ---- Animate solar system -------------------------------------------------
     if (this.solarSystem) {
       this.solarSystem.update(dt);
@@ -947,6 +995,8 @@ export class RelativisticVoyagerApp {
     if (this.keys.up)   verticalInput += 1;
     if (this.keys.down) verticalInput -= 1;
     this.spacecraft.update(this.state.beta, this.keys.forward, verticalInput);
+
+    _perfMark('solar');
 
     // ── Spacecraft base scale ──
     const baseScale = 0.12;
@@ -968,6 +1018,7 @@ export class RelativisticVoyagerApp {
       visible: true
     });
     this._updateMeasurementPanel(r);
+    _perfMark('preview');
 
     // ── 统一面板：单画布/双画布切换（双测量尺 + 时空图） ──
     const isSideBySide = this.state.frame === 'sideBySide';
@@ -1024,7 +1075,8 @@ export class RelativisticVoyagerApp {
 
     // Cockpit interior
     this.cockpit.update(dt, this.state.beta);
-    
+    _perfMark('cockpit');
+
     // Engine audio
     if (this.state.paused) {
       this.engineAudio.mute();
@@ -1032,14 +1084,38 @@ export class RelativisticVoyagerApp {
       this.engineAudio.update(this.currentSpeed / this.maxSpeed, this.keys.forward);
     }
     this.hud.update();
+    _perfMark('hud');
+
     this.dualClock.update(r);
+    _perfMark('clock');
+
     if (!isSideBySide) this.spacetimeDiagram.update();
+    _perfMark('spacetime');
+
+    _perfMark('panels');
 
     // ---- Final render --------------------------------------------------------
     if (usePostProcess) {
       this.postProcess.render(b, this.camera, this.scene, this.renderer, this._velocityForward);
     } else {
       this.renderer.render(this.scene, this.camera);
+    }
+    _perfMark('render');
+
+    // ── TEMP 性能汇总（每 2s 打印一次） ──
+    {
+      const p = this._perf;
+      p.frames++;
+      p._frameMs = (p._frameMs || 0) + (performance.now() - p._frameStart);
+      if (performance.now() - p.lastLog >= 2000) {
+        const n = p.frames;
+        const fps = (n * 1000) / (performance.now() - p.lastLog);
+        const parts = Object.entries(p.sections)
+          .map(([k, v]) => `${k}:${(v / n).toFixed(2)}ms`)
+          .join('  ');
+        console.log(`[PERF] fps=${fps.toFixed(1)}  ` + parts);
+        this._perf = { sections: {}, frames: 0, lastLog: performance.now() };
+      }
     }
   }
 }

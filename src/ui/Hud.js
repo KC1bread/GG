@@ -25,6 +25,13 @@ export class Hud {
       lengthRatio: document.getElementById('hud-length-ratio'),
       badge: document.getElementById('mode-badge')
     };
+    this._last = {}; // 缓存上次写入文本，避免每帧重复触发 DOM 更新
+  }
+
+  _setText(key, value) {
+    if (this._last[key] === value) return;
+    this._last[key] = value;
+    this.el[key].textContent = value;
   }
 
   update() {
@@ -36,14 +43,14 @@ export class Hud {
     };
 
     const r = computeRelativityState(this.state);
-    this.el.beta.textContent = fmt(r.beta, 3);
-    this.el.gamma.textContent = fmt(r.gamma, 3);
-    this.el.earthTime.textContent = fmtYears(r.earthTime);
-    this.el.shipTime.textContent = fmtYears(r.shipTime);
-    this.el.earthDistance.textContent = `${fmt(r.earthDistance, 2)} ly`;
-    this.el.shipDistance.textContent = `${fmt(r.shipDistance, 2)} ly`;
-    this.el.eta.textContent = `${fmtYears(r.etaEarth)} / ${fmtYears(r.etaShip)}`;
-    this.el.lengthRatio.textContent = fmt(r.lengthRatio, 3);
+    this._setText('beta', fmt(r.beta, 3));
+    this._setText('gamma', fmt(r.gamma, 3));
+    this._setText('earthTime', fmtYears(r.earthTime));
+    this._setText('shipTime', fmtYears(r.shipTime));
+    this._setText('earthDistance', `${fmt(r.earthDistance, 2)} ly`);
+    this._setText('shipDistance', `${fmt(r.shipDistance, 2)} ly`);
+    this._setText('eta', `${fmtYears(r.etaEarth)} / ${fmtYears(r.etaShip)}`);
+    this._setText('lengthRatio', fmt(r.lengthRatio, 3));
 
     // 顶部状态栏内容
     const frameLabel = this.state.frame === 'earth' ? 'Earth'
@@ -57,6 +64,6 @@ export class Hud {
       modeFull += ` · ${terrellName}`;
     }
     const betaLabel = `β = ${this.state.beta.toFixed(3)}c`;
-    this.el.badge.textContent = `${modeFull} | ${frameLabel} | ${perspectiveLabel} | ${betaLabel}`;
+    this._setText('badge', `${modeFull} | ${frameLabel} | ${perspectiveLabel} | ${betaLabel}`);
   }
 }

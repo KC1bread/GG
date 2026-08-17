@@ -12,7 +12,7 @@ export class MeasurementPreview {
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: true,
+      antialias: false,
       alpha: true
     });
     this.renderer.setClearColor(0x000000, 0);
@@ -58,6 +58,13 @@ export class MeasurementPreview {
     this._lastPointerY = 0;
     this._downClientX = 0;
     this._downClientY = 0;
+
+    // ── 按需渲染缓存（避免每帧无谓的 WebGL pass） ──
+    this._dirty = true;
+    this._lastBetaKey = null;
+    this._lastModeKey = null;
+    this._lastShipKey = null;
+    this._lastDragKey = null;
 
     this._bindDrag();
   }
@@ -158,7 +165,7 @@ export class MeasurementPreview {
     this._lastWidth = width;
     this._lastHeight = height;
 
-    this.renderer.setPixelRatio(Math.min(4, (window.devicePixelRatio || 1) * 2.6));
+    this.renderer.setPixelRatio(Math.min(1.5, (window.devicePixelRatio || 1)));
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
@@ -184,6 +191,19 @@ export class MeasurementPreview {
       viewMode = 'measured',
       frame = 'earth'
     } = physicsState;
+
+    // ── 按需渲染：内容仅在 beta / 模式 / 拖拽 / 船位置变化时改变 ──
+    const betaKey = Math.round(beta * 500); // 量化到 0.002
+    const modeKey = viewMode + '|' + frame + '|' + terrellMode;
+    const shipKey = Math.round(shipPosition?.x ?? 0)
+      + ',' + Math.round(shipPosition?.y ?? 0)
+      + ',' + Math.round(shipPosition?.z ?? 0);
+    const dragKey = Math.round(this.dragYaw * 200) + ',' + Math.round(this.dragPitch * 200);
+    const needsRender = this._dirty
+      || betaKey !== this._lastBetaKey
+      || modeKey !== this._lastModeKey
+      || shipKey !== this._lastShipKey
+      || dragKey !== this._lastDragKey;
 
     const viewEuler = new THREE.Euler(this.dragPitch, this.dragYaw, 0, 'YXZ');
     let terrellQuaternion = null;
@@ -214,7 +234,15 @@ export class MeasurementPreview {
     const targetZ = THREE.MathUtils.clamp(((shipPosition?.z ?? 200) - 200) * 0.0012, -0.12, 0.12);
     this.previewRoot.position.set(targetX, targetY, targetZ);
 
-    this.renderer.render(this.scene, this.camera);
+    // 仅在内容变化且画布可见时渲染；隐藏（display:none）时 clientWidth 为 0
+    if (needsRender && this.canvas.clientWidth >= 2 && this.canvas.clientHeight >= 2) {
+      this.renderer.render(this.scene, this.camera);
+      this._dirty = false;
+      this._lastBetaKey = betaKey;
+      this._lastModeKey = modeKey;
+      this._lastShipKey = shipKey;
+      this._lastDragKey = dragKey;
+    }
   }
 
   getInfo() {

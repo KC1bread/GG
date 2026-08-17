@@ -13,14 +13,41 @@
 
 export const DIAGRAM_MAX_EARTH_TIME = 4.24; // ly / c = light-year travel time
 
+// 内容驱动的重绘最小间隔（≈20 Hz）—— 加速时 β 每帧都在变，节流避免每帧全量重绘
+const REDRAW_INTERVAL_MS = 50;
+
 export class SpacetimeDiagram {
   constructor(state, opts = {}) {
     this.state = state;
     this.canvas = opts.canvas || document.getElementById('spacetime-canvas');
     this._frameOverride = opts.frame || null;  // sideBySide 时覆盖参考系
     this.ctx = this.canvas.getContext('2d');
-    this.dpr = window.devicePixelRatio || 1;
-    this._hitRegions = []; // 图例项 / 事件点可点击区域（供 Help 弹层使用）
+    this.dpr = Math.min(2, window.devicePixelRatio || 1);
+
+    // ── 按需重绘缓存 ──
+    this._dirty = true;
+    this._lastBetaKey = null;
+    this._lastTimeKey = null;
+    this._lastFrameKey = null;
+    this._lastSizeKey = null;
+    this._lastDrawAt = 0;   // 上次实际重绘的时间戳（节流用）
+
+    // ── 画布尺寸缓存：clientWidth/clientHeight 仅在 resize 时读 ──
+    // 每帧读会触发强制回流（reflow）—— 同帧内 dual-clock/HUD 已写 DOM 样式，
+    // 布局处于脏状态，读 clientWidth 迫使浏览器同步重排（实测 6~12ms）。
+    this._cachedW = 0;
+    this._cachedH = 0;
+    this._sizeDirty = true;
+
+    // ── 图例离屏缓存（图例含中文文本，每帧栅格化开销大，仅按需重画） ──
+    this._legendCache = null;
+    this._legendCacheKey = '';
+
+    // ── TEMP 性能探针：计时真正的画布绘制，定位后删除 ──
+    this._inst = { draw: 0, drawCount: 0, frames: 0, lastLog: performance.now() };
+
+    // ── 图例项 / 事件点可点击区域（供 Help 弹层使用） ──
+    this._hitRegions = [];
   }
 
   /** 命中检测：返回点击到的图例/事件点 key（逻辑像素坐标），未命中返回 null */
@@ -54,10 +81,58 @@ export class SpacetimeDiagram {
 
   update() {
     const ctx = this.ctx;
-    const rectWidth  = this.canvas.clientWidth || parseInt(this.canvas.getAttribute('width')) || 260;
-    const rectHeight = this.canvas.clientHeight || parseInt(this.canvas.getAttribute('height')) || 520;
-    this._hitRegions = [];
+
+    // ── 尺寸：仅在 resize 后重读，避免每帧 clientWidth 触发强制回流 ──
+    if (this._sizeDirty) {
+      const w0 = this.canvas.clientWidth || parseInt(this.canvas.getAttribute('width')) || 260;
+      const h0 = this.canvas.clientHeight || parseInt(this.canvas.getAttribute('height')) || 520;
+      if (w0 >= 10 && h0 >= 10) {
+        this._cachedW = w0;
+        this._cachedH = h0;
+        this._sizeDirty = false;
+      } else {
+        return; // 尚未完成布局，下一帧重试
+      }
+    }
+    const rectWidth  = this._cachedW;
+    const rectHeight = this._cachedH;
+    this._inst.frames++;
     if (rectWidth < 10 || rectHeight < 10) return;
+
+    // ── 按需重绘：仅在 β / 时间 / 参考系 / 尺寸变化时重画 ──
+    const betaKey  = Math.round(this.state.beta * 200);      // 量化到 0.005
+    const timeKey  = Math.round(this.state.earthTime * 50);  // 量化到 0.02 年
+    const frameKey = this._frameOverride || this.state.frame;
+    const sizeKey  = rectWidth + 'x' + rectHeight;
+
+    const structuralChange =
+      frameKey !== this._lastFrameKey || sizeKey !== this._lastSizeKey;
+    const contentChange =
+      betaKey !== this._lastBetaKey || timeKey !== this._lastTimeKey;
+
+    if (!this._dirty && !structuralChange && !contentChange) {
+      return;
+    }
+
+    // 内容（β/时间）变化时按最小间隔节流：加速期间 β 每帧都在变，
+    // 若不节流会每帧全量重绘（实测单次可达 ~12ms），成为卡顿主因。
+    if (!structuralChange) {
+      const now = performance.now();
+      if (now - this._lastDrawAt < REDRAW_INTERVAL_MS) {
+        this._dirty = true;   // 节流窗口内挂起，窗口结束后补画最新状态
+        return;
+      }
+    }
+
+    this._dirty = false;
+    this._lastDrawAt = performance.now();
+    this._lastBetaKey = betaKey;
+    this._lastTimeKey = timeKey;
+    this._lastFrameKey = frameKey;
+    this._lastSizeKey = sizeKey;
+
+    // ── TEMP 探针：仅计时真正的画布绘制 ──
+    const _drawStart = performance.now();
 
     // DPR 适配：仅刷新缓冲尺寸，CSS 样式由 width:100% 或属性默认值控制
     const logicalW = rectWidth;
@@ -373,23 +448,47 @@ export class SpacetimeDiagram {
     }
 
     // ═══════════════════════════════════════════════════════════
-    //  图例（两个模式共用，同时线颜色随模式变化）
-    //  key 用于点击命中 → Help 弹层显示对应概念说明
+    //  图例（两个模式共用）—— 离屏缓存，避免每帧栅格化中文文本
     // ═══════════════════════════════════════════════════════════
-    const legendData = [
+    ctx.drawImage(this._getLegendCache(w, h, originY, isShip, beta > 0.005), 0, 0, w, h);
+
+    // ── TEMP 探针汇总（每 2s 打印） ──
+    this._inst.draw += (performance.now() - _drawStart);
+    this._inst.drawCount++;
+    if (performance.now() - this._inst.lastLog >= 2000) {
+      const it = this._inst;
+      console.log(`[SPACE] draw=${(it.draw / Math.max(1, it.drawCount)).toFixed(2)}ms  ` +
+        `redraws=${it.drawCount}/${it.frames}`);
+      this._inst = { draw: 0, drawCount: 0, frames: 0, lastLog: performance.now() };
+    }
+
+    // ── 点击命中区域：每次实际重绘后重新登记（图例离屏缓存不影响命中） ──
+    this._hitRegions = [];
+    this._registerLegendRegions(w, h, originY, isShip, beta > 0.005);
+    this._hitRegions.push({ key: 'eventPoint', x: eventX, y: eventY, r: 16, ax: eventX, ay: eventY });
+  }
+
+  /** 标记尺寸需要重读（窗口 resize 后由 App 调用） */
+  resize() {
+    this._sizeDirty = true;
+    this._legendCache = null;
+    this._legendCacheKey = '';
+  }
+
+  /** 构建图例数据（两个模式共用，同时线颜色随模式变化；key 用于点击命中） */
+  _legendData(isShip, showVelRef) {
+    const data = [
       { key: 'earthWorldline', color: '#7dd3fc', width: 3,   dash: false, label: '地球世界线' },
       { key: 'shipWorldline',  color: '#facc15', width: 3,   dash: false, label: '飞船世界线' },
       { key: 'lightCone',      color: '#8899bb', width: 1.5, dash: true,  label: '光锥' },
     ];
-
     if (isShip) {
-      legendData.push({ key: 'simultaneity', color: '#a8d8ff', width: 1.5, dash: true, label: '飞船系同时线' });
+      data.push({ key: 'simultaneity', color: '#a8d8ff', width: 1.5, dash: true, label: '飞船系同时线' });
     } else {
-      legendData.push({ key: 'simultaneity', color: '#b8a0e0', width: 1.5, dash: true, label: '地球系同时线' });
+      data.push({ key: 'simultaneity', color: '#b8a0e0', width: 1.5, dash: true, label: '地球系同时线' });
     }
-
-    if (beta > 0.005) {
-      legendData.push({
+    if (showVelRef) {
+      data.push({
         key: 'velocityRef',
         color: 'rgba(250, 204, 21, 0.45)',
         width: 1.2,
@@ -397,7 +496,11 @@ export class SpacetimeDiagram {
         label: '速度参考线'
       });
     }
+    return data;
+  }
 
+  /** 图例布局（离屏绘制与点击命中区域共用，避免布局常量两处漂移） */
+  _legendLayout(w, h, originY, legendData) {
     const legPad   = 8;
     const legGapX  = 14;
     const legItemH = 18;
@@ -411,14 +514,21 @@ export class SpacetimeDiagram {
     const legY = originY + 14;
     const legLX = legX - legBoxW / 2;
     const legTY = legY;
+    return { legPad, legGapX, legItemH, col1W, col2W, legRows, legBoxW, legBoxH, legLX, legTY };
+  }
+
+  /** 在给定 2D 上下文中绘制图例 */
+  _drawLegend(ctx, w, h, originY, isShip, showVelRef) {
+    const legendData = this._legendData(isShip, showVelRef);
+    const L = this._legendLayout(w, h, originY, legendData);
 
     ctx.save();
     ctx.fillStyle = 'rgba(7, 17, 31, 0.70)';
-    this._roundRect(ctx, legLX, legTY, legBoxW, legBoxH, 6);
+    this._roundRect(ctx, L.legLX, L.legTY, L.legBoxW, L.legBoxH, 6);
     ctx.fill();
     ctx.strokeStyle = 'rgba(159, 183, 255, 0.18)';
     ctx.lineWidth = 0.5;
-    this._roundRect(ctx, legLX, legTY, legBoxW, legBoxH, 6);
+    this._roundRect(ctx, L.legLX, L.legTY, L.legBoxW, L.legBoxH, 6);
     ctx.stroke();
 
     ctx.font = '11px sans-serif';
@@ -428,9 +538,9 @@ export class SpacetimeDiagram {
       const item = legendData[i];
       const col  = i % 2;
       const row  = Math.floor(i / 2);
-      const colOff = col === 0 ? 0 : col1W + legGapX;
-      const y = legTY + legPad + row * legItemH + legItemH / 2;
-      const sx = legLX + legPad + colOff;
+      const colOff = col === 0 ? 0 : L.col1W + L.legGapX;
+      const y = L.legTY + L.legPad + row * L.legItemH + L.legItemH / 2;
+      const sx = L.legLX + L.legPad + colOff;
 
       ctx.strokeStyle = item.color;
       ctx.lineWidth   = item.width;
@@ -444,30 +554,58 @@ export class SpacetimeDiagram {
       ctx.fillStyle = '#c8d6f0';
       ctx.textAlign = 'left';
       ctx.fillText(item.label, sx + 24, y);
+    }
+    ctx.restore();
+  }
 
-      // 记录点击命中区域（覆盖线条+文字）
+  /** 登记图例项点击命中区域（逻辑像素坐标，覆盖线条+文字） */
+  _registerLegendRegions(w, h, originY, isShip, showVelRef) {
+    const legendData = this._legendData(isShip, showVelRef);
+    const L = this._legendLayout(w, h, originY, legendData);
+    const ctx = this.ctx;
+    ctx.font = '11px sans-serif';
+    ctx.textBaseline = 'middle';
+
+    for (let i = 0; i < legendData.length; i++) {
+      const item = legendData[i];
+      const col  = i % 2;
+      const row  = Math.floor(i / 2);
+      const colOff = col === 0 ? 0 : L.col1W + L.legGapX;
+      const y = L.legTY + L.legPad + row * L.legItemH + L.legItemH / 2;
+      const sx = L.legLX + L.legPad + colOff;
+
       const textW = ctx.measureText(item.label).width;
       this._hitRegions.push({
         key: item.key,
         x: sx - 4,
-        y: y - legItemH / 2,
+        y: y - L.legItemH / 2,
         w: 18 + 8 + textW + 6,
-        h: legItemH,
+        h: L.legItemH,
         ax: sx + 9 + textW / 2,
         ay: y
       });
     }
-    ctx.restore();
+  }
 
-    // 事件点（白色圆点）可点击区域 —— 供 Help 弹层显示「事件点」概念
-    this._hitRegions.push({
-      key: 'eventPoint',
-      x: eventX,
-      y: eventY,
-      r: 16,
-      ax: eventX,
-      ay: eventY
-    });
+  /** 图例离屏缓存：仅在参考系 / 是否显示速度参考线 / 尺寸变化时重画 */
+  _getLegendCache(w, h, originY, isShip, showVelRef) {
+    const key = `${isShip}|${showVelRef}|${w}|${h}`;
+    if (this._legendCache && this._legendCacheKey === key) {
+      return this._legendCache;
+    }
+
+    const c = document.createElement('canvas');
+    c.width  = Math.round(w * this.dpr);
+    c.height = Math.round(h * this.dpr);
+    const lctx = c.getContext('2d');
+    lctx.setTransform(1, 0, 0, 1, 0, 0);
+    lctx.scale(this.dpr, this.dpr);
+
+    this._drawLegend(lctx, w, h, originY, isShip, showVelRef);
+
+    this._legendCache = c;
+    this._legendCacheKey = key;
+    return c;
   }
 
   /** 圆角矩形路径 */

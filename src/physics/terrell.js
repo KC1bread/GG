@@ -1,6 +1,23 @@
 import * as THREE from 'three';
 import { clampBeta, lorentzFactor } from './relativity.js';
 
+// ── 模块级临时对象缓存 ────────────────────────────────────────────
+// terrellTransformMatrix / terrellRotation 每帧被多次调用（每行星一次），
+// 复用这些临时对象可避免每帧几十次堆分配触发的 GC 停顿。
+// 注意：所有使用都是同步、单线程、无重入的，因此共享是安全的。
+const _t = {
+  axis: new THREE.Vector3(),
+  zAxis: new THREE.Vector3(0, 0, 1),
+  rotQuat: new THREE.Quaternion(),
+  rotToVel: new THREE.Quaternion(),
+  rotToVelInv: new THREE.Quaternion(),
+  scaleMatrix: new THREE.Matrix4(),
+  rotToVelMat: new THREE.Matrix4(),
+  rotToVelInvMat: new THREE.Matrix4(),
+  contractionMat: new THREE.Matrix4(),
+  rotMat: new THREE.Matrix4()
+};
+
 /**
  * Amplification factor for the given Terrell mode.
  * @param {'lorentzOnly'|'precise'|'enhanced'} mode
@@ -41,7 +58,7 @@ function terrellRotationAngle(beta, alpha, mode) {
 export function terrellRotation(beta, viewDir, velocityDir, mode) {
   const amp = terrellAmplification(mode);
   if (amp === 0) {
-    return { angle: 0, axis: new THREE.Vector3(0, 0, 1) };
+    return { angle: 0, axis: _t.zAxis };
   }
 
   // α = angle between view direction and velocity direction
@@ -51,12 +68,12 @@ export function terrellRotation(beta, viewDir, velocityDir, mode) {
   const angle = terrellRotationAngle(beta, alpha, mode);
 
   // Rotation axis: viewDir × velocityDir (normalised)
-  const axis = new THREE.Vector3().crossVectors(viewDir, velocityDir);
+  const axis = _t.axis.crossVectors(viewDir, velocityDir);
   const axisLen = axis.length();
 
   // Guard: if cross product ≈ 0, viewDir ∥ velocityDir → identity rotation
   if (axisLen < 1e-8) {
-    return { angle: 0, axis: new THREE.Vector3(0, 0, 1) };
+    return { angle: 0, axis: _t.zAxis };
   }
   axis.normalize();
 
@@ -121,30 +138,27 @@ export function terrellTransformMatrix(beta, viewDir, velocityDir, mode) {
   const { angle, axis } = terrellRotation(b, viewDir, velocityDir, mode);
 
   // Build rotation quaternion from axis-angle
-  const rotQuat = new THREE.Quaternion().setFromAxisAngle(axis, angle);
+  const rotQuat = _t.rotQuat.setFromAxisAngle(axis, angle);
 
   // Build contraction matrix: scale along velocityDir
   // The scale matrix S contracts space along velocityDir by contractRatio.
   // In world coords: S = Rv · diag(1,1,contractRatio) · Rv^T
   // where Rv rotates world Z to velocityDir.
-  const rotToVel = new THREE.Quaternion().setFromUnitVectors(
-    new THREE.Vector3(0, 0, 1), velocityDir
-  );
-  const rotToVelInv = rotToVel.clone().invert();
+  const rotToVel = _t.rotToVel.setFromUnitVectors(_t.zAxis, velocityDir);
+  const rotToVelInv = _t.rotToVelInv.copy(rotToVel).invert();
 
-  const scaleMatrix = new THREE.Matrix4();
-  scaleMatrix.makeScale(1, 1, contractRatio);
+  _t.scaleMatrix.makeScale(1, 1, contractRatio);
 
   // Rv * S * Rv^T  →  scale along velocity direction in world space
-  const rotToVelMat = new THREE.Matrix4().makeRotationFromQuaternion(rotToVel);
-  const rotToVelInvMat = new THREE.Matrix4().makeRotationFromQuaternion(rotToVelInv);
-  const contractionMat = new THREE.Matrix4()
-    .multiplyMatrices(rotToVelMat, scaleMatrix)
-    .multiply(rotToVelInvMat);
+  _t.rotToVelMat.makeRotationFromQuaternion(rotToVel);
+  _t.rotToVelInvMat.makeRotationFromQuaternion(rotToVelInv);
+  _t.contractionMat
+    .multiplyMatrices(_t.rotToVelMat, _t.scaleMatrix)
+    .multiply(_t.rotToVelInvMat);
 
   // Compose: rotation · contraction
-  const rotMat = new THREE.Matrix4().makeRotationFromQuaternion(rotQuat);
-  const result = new THREE.Matrix4().multiplyMatrices(rotMat, contractionMat);
+  _t.rotMat.makeRotationFromQuaternion(rotQuat);
+  const result = new THREE.Matrix4().multiplyMatrices(_t.rotMat, _t.contractionMat);
 
   return result;
 }

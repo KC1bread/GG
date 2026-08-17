@@ -12,6 +12,7 @@ export class DualClockPanel {
     this.state = state;
     this._prevEarth = 0;
     this._prevShip = 0;
+    this._last = {}; // 缓存上次写入值，避免每帧重复触发 DOM 样式重算
   }
 
   // -- Initialisation -------------------------------------------------------
@@ -59,6 +60,35 @@ export class DualClockPanel {
 
   // -- Per-frame update -----------------------------------------------------
 
+  _setText(key, value) {
+    const k = 't:' + key;
+    if (this._last[k] === value) return;
+    this._last[k] = value;
+    this.el[key].textContent = value;
+  }
+
+  _setWidth(key, pct) {
+    const value = (Math.round(pct * 2) / 2) + '%'; // 量化到 0.5%，减少样式重算
+    const k = 'w:' + key;
+    if (this._last[k] === value) return;
+    this._last[k] = value;
+    this.el[key].style.width = value;
+  }
+
+  _setColor(key, value) {
+    const k = 'c:' + key;
+    if (this._last[k] === value) return;
+    this._last[k] = value;
+    this.el[key].style.color = value;
+  }
+
+  _setBackground(key, value) {
+    const k = 'b:' + key;
+    if (this._last[k] === value) return;
+    this._last[k] = value;
+    this.el[key].style.background = value;
+  }
+
   update(r) {
     if (!this.el) return;
 
@@ -68,41 +98,46 @@ export class DualClockPanel {
     this._prevShip  += (r.shipTime  - this._prevShip)  * alpha;
 
     // Clock digits
-    this.el.earthVal.textContent = this._prevEarth.toFixed(3) + ' 年';
-    this.el.shipVal.textContent  = this._prevShip.toFixed(3)  + ' 年';
+    this._setText('earthVal', this._prevEarth.toFixed(3) + ' 年');
+    this._setText('shipVal',  this._prevShip.toFixed(3)  + ' 年');
 
     // Gap display
     const gap = Math.max(0, this._prevEarth - this._prevShip);
-    this.el.gapVal.textContent = gap.toFixed(3) + ' 年';
+    this._setText('gapVal', gap.toFixed(3) + ' 年');
 
     // Bar widths — both fill relative to the larger of the two
     const maxTime = Math.max(this._prevEarth, this._prevShip, 0.001);
     const earthPct = (this._prevEarth / maxTime) * 100;
     const shipPct  = (this._prevShip  / maxTime) * 100;
 
-    this.el.earthBar.style.width = earthPct + '%';
-    this.el.shipBar.style.width  = shipPct  + '%';
+    this._setWidth('earthBar', earthPct);
+    this._setWidth('shipBar',  shipPct);
 
     // Dynamic colour: earth gets warmer red as gap grows, ship stays cool blue
     const gapRatio = this._prevEarth > 0.01
       ? Math.min(1, gap / this._prevEarth)
       : 0;
 
-    const warmR = Math.floor(120 + gapRatio * 135);
-    const warmG = Math.floor(180 - gapRatio * 140);
-    const warmB = Math.floor(220 - gapRatio * 160);
-    this.el.earthVal.style.color = `rgb(${warmR}, ${warmG}, ${warmB})`;
-    this.el.earthBar.style.background =
-      `linear-gradient(90deg, #ff9966, rgb(${warmR}, ${Math.max(40, warmG)}, ${Math.max(60, warmB)}))`;
+    // 颜色量化到 5 的倍数，减少字符串变化频率
+    const warmR = Math.round((120 + gapRatio * 135) / 5) * 5;
+    const warmG = Math.round((180 - gapRatio * 140) / 5) * 5;
+    const warmB = Math.round((220 - gapRatio * 160) / 5) * 5;
+    this._setColor('earthVal', `rgb(${warmR}, ${warmG}, ${warmB})`);
+    this._setBackground('earthBar',
+      `linear-gradient(90deg, #ff9966, rgb(${warmR}, ${Math.max(40, warmG)}, ${Math.max(60, warmB)}))`);
 
-    const coolR = Math.floor(100 - gapRatio * 40);
-    const coolG = Math.floor(160 - gapRatio * 40);
-    this.el.shipVal.style.color = `rgb(${coolR}, ${coolG}, 255)`;
+    const coolR = Math.round((100 - gapRatio * 40) / 5) * 5;
+    const coolG = Math.round((160 - gapRatio * 40) / 5) * 5;
+    this._setColor('shipVal', `rgb(${coolR}, ${coolG}, 255)`);
 
     // Fade gap text when beta is negligible
     const gapEl = this.el.gapVal.parentElement;
     if (gapEl) {
-      gapEl.style.opacity = gapRatio < 0.005 ? '0.4' : '1';
+      const opacity = gapRatio < 0.005 ? '0.4' : '1';
+      if (this._last.opacity !== opacity) {
+        this._last.opacity = opacity;
+        gapEl.style.opacity = opacity;
+      }
     }
   }
 

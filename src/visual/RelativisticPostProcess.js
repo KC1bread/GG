@@ -40,6 +40,9 @@ export class RelativisticPostProcess {
     /** Transition speed — reaches target in ~0.5 s */
     this.transitionSpeed = 2.4;
 
+    /** Off-screen render scale — lower resolution cut shader cost, LinearFilter upscales */
+    this._resolutionScale = 0.75;
+
     /** Reference to the main renderer */
     this.renderer = null;
 
@@ -66,8 +69,10 @@ export class RelativisticPostProcess {
 
     const size = renderer.getSize(new THREE.Vector2());
 
-    // ---- Render target — LinearFilter avoids aliasing on UV remap -----------
-    this.renderTarget = new THREE.WebGLRenderTarget(size.x, size.y, {
+    // ---- Render target — 降分辨率渲染（0.75×），LinearFilter 上采样补足 ---------
+    const rtW = Math.max(1, Math.round(size.x * this._resolutionScale));
+    const rtH = Math.max(1, Math.round(size.y * this._resolutionScale));
+    this.renderTarget = new THREE.WebGLRenderTarget(rtW, rtH, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
@@ -109,7 +114,9 @@ export class RelativisticPostProcess {
     if (this.renderTarget) {
       this.renderTarget.dispose();
     }
-    this.renderTarget = new THREE.WebGLRenderTarget(width, height, {
+    const rtW = Math.max(1, Math.round(width * this._resolutionScale));
+    const rtH = Math.max(1, Math.round(height * this._resolutionScale));
+    this.renderTarget = new THREE.WebGLRenderTarget(rtW, rtH, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       format: THREE.RGBAFormat,
