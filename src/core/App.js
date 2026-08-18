@@ -19,6 +19,7 @@ import { EngineAudio } from '../audio/EngineAudio.js';
 import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRatio } from '../physics/relativity.js';
 import { terrellTransformMatrix } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
+import { VrStatus } from '../ui/VrStatus.js';
 
 /**
  * RelativisticVoyagerApp — main application controller.
@@ -245,6 +246,10 @@ export class RelativisticVoyagerApp {
     // Bottom-bar based panel management (v2)
     this.panelManager = new PanelManager();
     this.panelManager.init();
+
+    // ── VR 设备连接状态（实时能力检测 + 会话/输入源事件） ──
+    this.vrStatus = new VrStatus(this.renderer);
+    this.vrStatus.init();
 
     // ── 时空图交互式概念说明（ⓘ + 图例点击） ──
     this.spacetimeHelp = new SpacetimeHelp(this.state);

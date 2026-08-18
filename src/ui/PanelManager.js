@@ -197,13 +197,9 @@ export class PanelManager {
     content.className = 'panel-content';
     content.innerHTML = `
       <div class="vr-status-content">
-        <div class="vr-status-icon">🥽</div>
-        <div class="vr-status-title">VR 设备状态</div>
-        <div class="vr-status-detail" id="vr-status-detail">
-          <p>当前浏览器不支持 VR / WebXR，或未检测到 VR 设备。</p>
-          <p class="small-note">如需体验沉浸式 VR 交互，请使用支持 WebXR 的浏览器（如 Chrome）并连接兼容的 VR 头显设备。</p>
-          <p class="small-note">VR 完整沉浸式交互方案将在后续版本迭代开发。</p>
-        </div>
+        <div class="vr-status-icon" id="vr-status-icon">🥽</div>
+        <div class="vr-status-title" id="vr-status-title">VR 设备状态</div>
+        <div class="vr-status-detail" id="vr-status-detail"></div>
         <div id="vr-button-container" class="vr-button-container"></div>
       </div>
     `;
