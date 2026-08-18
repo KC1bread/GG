@@ -20,6 +20,7 @@ import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRa
 import { terrellTransformMatrix } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
 import { VrStatus } from '../ui/VrStatus.js';
+import { VRControllerInput } from '../input/VRControllerInput.js';
 
 /**
  * RelativisticVoyagerApp — main application controller.
@@ -109,6 +110,7 @@ export class RelativisticVoyagerApp {
     this.mouse = new THREE.Vector2();
 
     this._smoothCamPos = new THREE.Vector3();
+    this._vrPlanetCursor = 0;   // 手柄行星跳转游标（0..7）
     this.clock = new THREE.Clock();
 
     // Terrell 临时对象复用（避免每帧 GC 分配）
@@ -538,6 +540,13 @@ export class RelativisticVoyagerApp {
   //  Planet Jump — keys 1-8 warp to planets (first-person + observed only)
   // ==========================================================================
 
+  /** 手柄循环跳转：delta +1 下一颗 / -1 上一颗（0..7 回绕） */
+  _vrJumpToPlanet(delta) {
+    if (this._vrPlanetCursor == null) this._vrPlanetCursor = 0;
+    this._vrPlanetCursor = (this._vrPlanetCursor + delta + 8) % 8;
+    this._handlePlanetJump(this._vrPlanetCursor);
+  }
+
   _handlePlanetJump(planetIndex) {
     if (this.state.viewPerspective !== 'firstPerson' || this.state.viewMode !== 'observed') {
       return;
@@ -780,6 +789,11 @@ export class RelativisticVoyagerApp {
     const ratio = lengthContractionRatio(this.state.beta);
     const effectiveMode = (this.state.viewMode === 'observed' && this.state.frame === 'earth')
       ? this.state.terrellMode : 'lorentzOnly';
+
+    // ---- VR 手柄输入（仅在 XR 会话中；setupVr 落地后 vrController 存在） ----
+    if (this.renderer.xr.isPresenting && this.vrController) {
+      this.vrController.update();
+    }
 
     // ---- Keyboard flight — smooth acceleration / deceleration ----------------
     if (!this.state.paused) {
