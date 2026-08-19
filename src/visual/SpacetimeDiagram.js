@@ -10,6 +10,7 @@
  *    · 同时虚线 ∥ x' 轴，速度参考线 ∥ x' 轴
  *    · 光锥永久保持 45°，不拉伸不旋转
  */
+import { t, getLang } from '../i18n/i18n.js';
 
 export const DIAGRAM_MAX_EARTH_TIME = 4.24; // ly / c = light-year travel time
 
@@ -22,6 +23,22 @@ export class SpacetimeDiagram {
     this.canvas = opts.canvas || document.getElementById('spacetime-canvas');
     this._frameOverride = opts.frame || null;  // sideBySide 时覆盖参考系
     this.ctx = this.canvas.getContext('2d');
+    if (!this.ctx) {
+      // Canvas 2D 不可用（个别 WebView 环境）：占位提示 + 跳过绘制，避免崩溃
+      console.error('[RV] 时空图：Canvas 2D 上下文获取失败');
+      this._ctxFailed = true;
+      const wrap = this.canvas.parentElement;
+      if (wrap && !wrap.querySelector('.st-canvas-error')) {
+        const d = document.createElement('div');
+        d.className = 'st-canvas-error';
+        d.textContent = 'Spacetime diagram unavailable (Canvas 2D)';
+        d.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#9fb0d0;text-align:center;padding:8px;';
+        if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+        wrap.appendChild(d);
+      }
+    } else {
+      this._ctxFailed = false;
+    }
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
 
     // ── 按需重绘缓存 ──
@@ -80,16 +97,49 @@ export class SpacetimeDiagram {
   }
 
   update() {
-    const ctx = this.ctx;
+    try {
+      this._updateInner();
+    } catch (err) {
+      // 绘制异常隔离：只跳过该帧，不影响主循环其它部分
+      if (this._lastDrawErrMsg !== err.message) {
+        this._lastDrawErrMsg = err.message;
+        console.warn('[RV] 时空图绘制异常（已跳过该帧）：', err.message);
+      }
+    }
+  }
 
-    // ── 尺寸：仅在 resize 后重读，避免每帧 clientWidth 触发强制回流 ──
-    if (this._sizeDirty) {
+  _updateInner() {
+    const ctx = this.ctx;
+    if (!ctx) return; // Canvas 2D 不可用时跳过绘制
+
+    // ── 尺寸：resize 时重读；另每 30 帧自动校准一次 ──
+    //    面板从隐藏→显示、dual 布局切换时 CSS 尺寸会变化，
+    //    若只依赖 resize 事件，首次显示时画布会按错误尺寸绘制（压扁/拉伸）。
+    //    1px 阈值 + 隐藏保护：避免 WebView 下 clientWidth 微小抖动导致反复重建闪屏。
+    this._frameCount = (this._frameCount || 0) + 1;
+    if (this._sizeDirty || this._frameCount % 30 === 0) {
+      if (this.canvas.clientWidth < 10 || this.canvas.clientHeight < 10) {
+        this._sizeDirty = true; // 尚未完成布局（如面板隐藏），下一帧重试
+        return;
+      }
       const w0 = this.canvas.clientWidth || parseInt(this.canvas.getAttribute('width')) || 260;
-      const h0 = this.canvas.clientHeight || parseInt(this.canvas.getAttribute('height')) || 520;
+      const h0 = this.canvas.clientHeight || parseInt(this.canvas.getAttribute('height')) || 260;
       if (w0 >= 10 && h0 >= 10) {
-        this._cachedW = w0;
-        this._cachedH = h0;
-        this._sizeDirty = false;
+        if (Math.abs(w0 - this._cachedW) > 1 || Math.abs(h0 - this._cachedH) > 1) {
+          // 防抖：400ms 内不重复重建画布，避免 WebView 尺寸微抖动造成反复闪屏
+          const now = performance.now();
+          if (now - (this._lastBufResizeAt || 0) < 400) {
+            return;
+          }
+          this._lastBufResizeAt = now;
+          this._cachedW = w0;
+          this._cachedH = h0;
+          this._sizeDirty = true; // 尺寸变化 → 下方 sizeKey 变化触发重绘
+        } else {
+          this._cachedW = w0;
+          this._cachedH = h0;
+          this._sizeDirty = false;
+        }
       } else {
         return; // 尚未完成布局，下一帧重试
       }
@@ -99,16 +149,17 @@ export class SpacetimeDiagram {
     this._inst.frames++;
     if (rectWidth < 10 || rectHeight < 10) return;
 
-    // ── 按需重绘：仅在 β / 时间 / 参考系 / 尺寸变化时重画 ──
+    // ── 按需重绘：仅在 β / 时间 / 参考系 / 尺寸 / 语言 变化时重画 ──
     const betaKey  = Math.round(this.state.beta * 200);      // 量化到 0.005
     const timeKey  = Math.round(this.state.earthTime * 50);  // 量化到 0.02 年
     const frameKey = this._frameOverride || this.state.frame;
     const sizeKey  = rectWidth + 'x' + rectHeight;
+    const langKey  = getLang();
 
     const structuralChange =
       frameKey !== this._lastFrameKey || sizeKey !== this._lastSizeKey;
     const contentChange =
-      betaKey !== this._lastBetaKey || timeKey !== this._lastTimeKey;
+      betaKey !== this._lastBetaKey || timeKey !== this._lastTimeKey || langKey !== this._lastLangKey;
 
     if (!this._dirty && !structuralChange && !contentChange) {
       return;
@@ -130,6 +181,7 @@ export class SpacetimeDiagram {
     this._lastTimeKey = timeKey;
     this._lastFrameKey = frameKey;
     this._lastSizeKey = sizeKey;
+    this._lastLangKey = langKey;
 
     // ── TEMP 探针：仅计时真正的画布绘制 ──
     const _drawStart = performance.now();
@@ -478,14 +530,14 @@ export class SpacetimeDiagram {
   /** 构建图例数据（两个模式共用，同时线颜色随模式变化；key 用于点击命中） */
   _legendData(isShip, showVelRef) {
     const data = [
-      { key: 'earthWorldline', color: '#7dd3fc', width: 3,   dash: false, label: '地球世界线' },
-      { key: 'shipWorldline',  color: '#facc15', width: 3,   dash: false, label: '飞船世界线' },
-      { key: 'lightCone',      color: '#8899bb', width: 1.5, dash: true,  label: '光锥' },
+      { key: 'earthWorldline', color: '#7dd3fc', width: 3,   dash: false, label: t('st.legend.earthWL') },
+      { key: 'shipWorldline',  color: '#facc15', width: 3,   dash: false, label: t('st.legend.shipWL') },
+      { key: 'lightCone',      color: '#8899bb', width: 1.5, dash: true,  label: t('st.legend.cone') },
     ];
     if (isShip) {
-      data.push({ key: 'simultaneity', color: '#a8d8ff', width: 1.5, dash: true, label: '飞船系同时线' });
+      data.push({ key: 'simultaneity', color: '#a8d8ff', width: 1.5, dash: true, label: t('st.legend.shipSim') });
     } else {
-      data.push({ key: 'simultaneity', color: '#b8a0e0', width: 1.5, dash: true, label: '地球系同时线' });
+      data.push({ key: 'simultaneity', color: '#b8a0e0', width: 1.5, dash: true, label: t('st.legend.earthSim') });
     }
     if (showVelRef) {
       data.push({
@@ -493,34 +545,56 @@ export class SpacetimeDiagram {
         color: 'rgba(250, 204, 21, 0.45)',
         width: 1.2,
         dash: true,
-        label: '速度参考线'
+        label: t('st.legend.velRef')
       });
     }
     return data;
   }
 
-  /** 图例布局（离屏绘制与点击命中区域共用，避免布局常量两处漂移） */
-  _legendLayout(w, h, originY, legendData) {
+  /** 图例布局（离屏绘制与点击命中区域共用；列宽按文字长度自适应，放不下时单列） */
+  _legendLayout(w, h, originY, legendData, ctx) {
     const legPad   = 8;
     const legGapX  = 14;
     const legItemH = 18;
-    const col1W    = 90;
-    const col2W    = 90;
-    const legRows  = Math.ceil(legendData.length / 2);
-    const legBoxW  = col1W + legGapX + col2W + legPad * 2;
+
+    // ── 动态列宽：本列最长文字决定（线 18px + 文字起点 24px + 文字宽 + 余量 8px） ──
+    let col1W = 90;
+    let col2W = 90;
+    let singleCol = false;
+    if (ctx) {
+      ctx.font = '11px sans-serif';
+      const colWidths = [0, 0];
+      for (let i = 0; i < legendData.length; i++) {
+        const tw = ctx.measureText(legendData[i].label).width;
+        colWidths[i % 2] = Math.max(colWidths[i % 2], tw);
+      }
+      col1W = Math.max(col1W, 18 + 24 + colWidths[0]);
+      col2W = Math.max(col2W, 18 + 24 + colWidths[1]);
+      const availW = Math.max(120, w - legPad * 2 - 8);
+      if (col1W + legGapX + col2W > availW) {
+        // 两列放不下（英文长词）→ 退化为单列，纵向排列
+        singleCol = true;
+        col1W = Math.max(col1W, 18 + 24 + Math.max(colWidths[0], colWidths[1]));
+        col2W = col1W;
+      }
+    }
+
+    const cols     = singleCol ? 1 : 2;
+    const legRows  = Math.ceil(legendData.length / cols);
+    const legBoxW  = cols * col1W + (cols - 1) * legGapX + legPad * 2;
     const legBoxH  = legRows * legItemH + legPad * 2;
 
     const legX = w / 2;
     const legY = originY + 14;
     const legLX = legX - legBoxW / 2;
     const legTY = legY;
-    return { legPad, legGapX, legItemH, col1W, col2W, legRows, legBoxW, legBoxH, legLX, legTY };
+    return { legPad, legGapX, legItemH, col1W, col2W, legRows, legBoxW, legBoxH, legLX, legTY, singleCol };
   }
 
   /** 在给定 2D 上下文中绘制图例 */
   _drawLegend(ctx, w, h, originY, isShip, showVelRef) {
     const legendData = this._legendData(isShip, showVelRef);
-    const L = this._legendLayout(w, h, originY, legendData);
+    const L = this._legendLayout(w, h, originY, legendData, ctx);
 
     ctx.save();
     ctx.fillStyle = 'rgba(7, 17, 31, 0.70)';
@@ -536,8 +610,8 @@ export class SpacetimeDiagram {
 
     for (let i = 0; i < legendData.length; i++) {
       const item = legendData[i];
-      const col  = i % 2;
-      const row  = Math.floor(i / 2);
+      const col  = L.singleCol ? 0 : i % 2;
+      const row  = L.singleCol ? i : Math.floor(i / 2);
       const colOff = col === 0 ? 0 : L.col1W + L.legGapX;
       const y = L.legTY + L.legPad + row * L.legItemH + L.legItemH / 2;
       const sx = L.legLX + L.legPad + colOff;
@@ -561,15 +635,15 @@ export class SpacetimeDiagram {
   /** 登记图例项点击命中区域（逻辑像素坐标，覆盖线条+文字） */
   _registerLegendRegions(w, h, originY, isShip, showVelRef) {
     const legendData = this._legendData(isShip, showVelRef);
-    const L = this._legendLayout(w, h, originY, legendData);
+    const L = this._legendLayout(w, h, originY, legendData, this.ctx);
     const ctx = this.ctx;
     ctx.font = '11px sans-serif';
     ctx.textBaseline = 'middle';
 
     for (let i = 0; i < legendData.length; i++) {
       const item = legendData[i];
-      const col  = i % 2;
-      const row  = Math.floor(i / 2);
+      const col  = L.singleCol ? 0 : i % 2;
+      const row  = L.singleCol ? i : Math.floor(i / 2);
       const colOff = col === 0 ? 0 : L.col1W + L.legGapX;
       const y = L.legTY + L.legPad + row * L.legItemH + L.legItemH / 2;
       const sx = L.legLX + L.legPad + colOff;
@@ -587,9 +661,9 @@ export class SpacetimeDiagram {
     }
   }
 
-  /** 图例离屏缓存：仅在参考系 / 是否显示速度参考线 / 尺寸变化时重画 */
+  /** 图例离屏缓存：仅在参考系 / 是否显示速度参考线 / 尺寸 / 语言 变化时重画 */
   _getLegendCache(w, h, originY, isShip, showVelRef) {
-    const key = `${isShip}|${showVelRef}|${w}|${h}`;
+    const key = `${isShip}|${showVelRef}|${w}|${h}|${getLang()}`;
     if (this._legendCache && this._legendCacheKey === key) {
       return this._legendCache;
     }
