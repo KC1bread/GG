@@ -30,21 +30,18 @@ export function mapGamepadToActions(gamepad, handedness) {
     shift: false, ctrl: false,
   };
 
-  // WebXR 标准按键布局：button[0]=trigger，button[1]=squeeze/grip
-  actions.forward  = !!(buttons[0] && buttons[0].pressed);
-  actions.backward = !!(buttons[1] && buttons[1].pressed);
+  // 单手柄（左手）飞行：仅左手柄产生飞行输入，右手柄忽略
+  if (handedness !== 'left') return actions;
 
-  if (handedness === 'left') {
-    // 左手：摇杆 X=转向，Y=升降
-    if (axisX < -AXIS_DEADZONE) actions.left = true;
-    if (axisX >  AXIS_DEADZONE) actions.right = true;
-    if (axisY >  AXIS_DEADZONE) actions.up = true;
-    if (axisY < -AXIS_DEADZONE) actions.down = true;
-  } else {
-    // 右手：摇杆 Y=β 加减
-    if (axisY >  AXIS_DEADZONE) actions.shift = true;
-    if (axisY < -AXIS_DEADZONE) actions.ctrl = true;
-  }
+  // 左摇杆（飞行杆式）：Y=前进/后退，X=转向
+  if (axisY >  AXIS_DEADZONE) actions.forward = true;
+  if (axisY < -AXIS_DEADZONE) actions.backward = true;
+  if (axisX < -AXIS_DEADZONE) actions.left = true;
+  if (axisX >  AXIS_DEADZONE) actions.right = true;
+
+  // 扳机=加速 β+（shift），握把=减速 β−（ctrl）
+  actions.shift = !!(buttons[0] && buttons[0].pressed);
+  actions.ctrl  = !!(buttons[1] && buttons[1].pressed);
 
   return actions;
 }
@@ -110,15 +107,17 @@ export class VRControllerInput {
   }
 
   _handleButtonEdges(handedness, buttons) {
+    // 单手柄（左手）飞行：仅左主键跳转到下一颗行星
+    if (handedness !== 'left') return;
+
     const now = buttons.map((b) => !!b.pressed);
     const prev = this._prevButtons.get(handedness) || [];
 
-    // button[4] = Quest A（右）/ X（左），也是多数手柄的主按键
+    // button[4] = Quest X（左）/ A（右），也是多数手柄的主按键
     const nowMain = !!now[4];
     const prevMain = !!prev[4];
     if (nowMain && !prevMain) {
-      if (handedness === 'right') this.app._vrJumpToPlanet(+1);
-      else this.app._vrJumpToPlanet(-1);
+      this.app._vrJumpToPlanet(+1);
     }
 
     this._prevButtons.set(handedness, now);
