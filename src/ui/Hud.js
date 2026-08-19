@@ -58,7 +58,8 @@ export class Hud {
       : 'Side-by-side';
     const perspectiveLabel = this.state.viewPerspective === 'firstPerson' ? '1P' : '3P';
     const modeLabel = this.state.viewMode === 'measured' ? 'Measured' : 'Observed';
-    let modeFull = modeLabel;
+    const effectLabel = this.state.effectMode === 'teaching' ? '教学模式' : '显示模式';
+    let modeFull = `${modeLabel} · ${effectLabel}`;
     if (this.state.viewMode === 'observed') {
       const terrellName = _terrellNames[this.state.terrellMode] || this.state.terrellMode;
       modeFull += ` · ${terrellName}`;

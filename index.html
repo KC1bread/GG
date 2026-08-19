@@ -45,6 +45,7 @@
         <option value="firstPerson">第一人称 First-person</option>
       </select>
     </label>
+    <p class="small-note">第一人称：屏幕中央是视线，橙色「航向」是飞行方向。按住右键偷看（松开回正）；P 持续观察；C 回正；A/D 转向。</p>
 
     <label>
       显示模式
@@ -165,11 +166,21 @@
   <!-- Planet info popup card -->
   <div id="planet-info-card" class="planet-info-card hidden"></div>
 
-  <!-- First-person crosshair (reticle) -->
+  <!-- First-person look reticle + heading (velocity) marker -->
   <div id="crosshair" class="hidden">
     <div class="crosshair-h"></div>
     <div class="crosshair-v"></div>
     <div class="crosshair-dot"></div>
+    <div class="look-label">视线</div>
+    <div id="heading-marker" class="hidden">
+      <div class="heading-pip"></div>
+      <span>航向</span>
+    </div>
+    <div id="heading-edge" class="hidden">
+      <div class="heading-edge-arrow"></div>
+      <span class="heading-edge-label">航向</span>
+    </div>
+    <div id="look-offset-hint" class="hidden"></div>
   </div>
 
   <!-- Relativistic tunnel vignette — darkens screen edges at near-light-speed -->
@@ -178,11 +189,16 @@
   <div id="high-speed-effects-guide" class="high-speed-effects-guide">
     <div class="guide-frame guide-frame-top">
       <span class="guide-chip">光行差</span>
-      <p>高速前进时，来自前方的星光会被“挤”向视野中心，所以你会看到正前方更密、边缘更空。</p>
+      <p>高速前进时，来自前方的星光会被“挤”向视野中心，所以你会看到正前方更密、边缘更空。显示模式与教学模式的聚拢幅度基本相同。</p>
+    </div>
+    <div class="guide-frame guide-frame-left">
+      <span class="guide-chip">教学模式</span>
+      <p>教学档不额外挤星空，而是把后方、稀疏处的红移星放大、加亮、加红，方便在约 0.8c 回头观察。</p>
+      <p class="guide-teach-steps">建议步骤：底栏打开「教学模式」→ 加速到 0.8c → 朝银心密集方向飞 → 转头看后方。底栏「学习教学」里可同时打开本释义。</p>
     </div>
     <div class="guide-frame guide-frame-right">
       <span class="guide-chip">多普勒频移</span>
-      <p>迎面而来的光波被压缩，前方颜色更容易偏蓝；身后则会被拉长，趋向红移。</p>
+      <p>迎面而来的光波被压缩，前方颜色更容易偏蓝；身后则会被拉长，趋向红移。教学档会把这种红移画得更显眼，物理读数不变。</p>
     </div>
     <div class="guide-frame guide-frame-bottom">
       <span class="guide-chip">暗角与头灯效应</span>
@@ -192,6 +208,7 @@
       <span>β <strong id="high-speed-guide-beta">0.000</strong></span>
       <span>γ <strong id="high-speed-guide-gamma">1.00</strong></span>
       <span>前向蓝移 <strong id="high-speed-guide-shift">1.00×</strong></span>
+      <span>视效 <strong id="high-speed-guide-effect">教学模式</strong></span>
     </div>
   </div>
 
