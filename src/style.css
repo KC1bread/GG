@@ -993,3 +993,15 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   .mode-badge { top: 8px; }
   .high-speed-effects-guide { display: none; }
 }
+
+/* ── VR 沉浸模式：进入 XR 会话时隐藏所有 2D DOM 覆盖层 ── */
+body.xr-presenting .panel,
+body.xr-presenting .bottom-bar,
+body.xr-presenting #intro-panel,
+body.xr-presenting #crosshair,
+body.xr-presenting #tunnel-vignette,
+body.xr-presenting #mode-badge,
+body.xr-presenting #planet-info-card,
+body.xr-presenting .high-speed-effects-guide {
+  display: none !important;
+}

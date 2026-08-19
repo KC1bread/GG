@@ -130,6 +130,7 @@ export class RelativisticVoyagerApp {
     this.setupKeyboard();
     this.setupMouse();
     this.setupResize();
+    this.setupVr();
     this.logger.log('app_init');
     this.renderer.setAnimationLoop(() => this.update());
   }
@@ -147,6 +148,11 @@ export class RelativisticVoyagerApp {
     this._smoothCamPos.copy(this.shipPosition).add(this.cameraLocalOffset);
     this.camera.position.copy(this._smoothCamPos);
     this.camera.lookAt(this.shipPosition);
+
+    // WebXR 相机 rig：承载飞船位姿的父节点，相机作为子节点（头部姿态叠加其上）
+    this.cameraRig = new THREE.Group();
+    this.cameraRig.add(this.camera);
+    this.scene.add(this.cameraRig);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -524,6 +530,31 @@ export class RelativisticVoyagerApp {
       this.spacetimeDiagram?.resize();
       this.comparisonEarthSpacetime?.resize();
       this.comparisonShipSpacetime?.resize();
+    });
+  }
+
+  // ---- VR（WebXR）会话与手柄初始化 -----------------------------------------
+
+  setupVr() {
+    // 坐姿 cockpit：'local' 参考系（原点=会话开始时的头显位置），
+    // 避免 'local-floor' 把真实 ~1.6m 地面高度叠加到 0.7 单位座舱上的比例错配。
+    this.renderer.xr.setReferenceSpaceType('local');
+
+    this.vrController = new VRControllerInput(this);
+    this.vrController.init();
+
+    this.renderer.xr.addEventListener('sessionstart', () => {
+      document.body.classList.add('xr-presenting');
+      // VR 只有第一人称有意义：切到 cockpit，隐藏飞船模型，显示座舱
+      if (this.state.viewPerspective !== 'firstPerson') {
+        this._setPerspective('firstPerson');
+      }
+      this.freeLookYaw = 0;
+      this.freeLookPitch = 0;
+    });
+
+    this.renderer.xr.addEventListener('sessionend', () => {
+      document.body.classList.remove('xr-presenting');
     });
   }
 
@@ -905,7 +936,16 @@ export class RelativisticVoyagerApp {
     }
 
     // ---- Camera --------------------------------------------------------------
-    if (this.state.viewPerspective === 'firstPerson') {
+    if (this.renderer.xr.isPresenting) {
+      // XR：rig 承载飞船位姿，头部姿态（three.js 自动应用）叠加其上。
+      // 不手动写 camera.position/lookAt，避免与头部姿态互相覆盖。
+      const fpOffset = this.firstPersonOffset.clone();
+      fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
+      this.cameraRig.position.copy(this.shipPosition).add(fpOffset);
+      this.cameraRig.rotation.set(0, this.shipHeading, 0);
+      // 同步 _smoothCamPos，供 Terrell 视向计算使用（头部偏移相对行星距离可忽略）
+      this._smoothCamPos.copy(this.cameraRig.position);
+    } else if (this.state.viewPerspective === 'firstPerson') {
       const fpOffset = this.firstPersonOffset.clone();
       fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
       const fpCamPos = this.shipPosition.clone().add(fpOffset);
