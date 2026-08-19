@@ -1,4 +1,5 @@
 import { computeRelativityState } from '../physics/relativity.js';
+import { t, applyStatic } from '../i18n/i18n.js';
 
 /**
  * DualClockPanel — DOM-driven dual clock for time-dilation visualization.
@@ -26,28 +27,30 @@ export class DualClockPanel {
     root.innerHTML = `
       <div class="dual-clock-row">
         <div class="clock-card earth-card">
-          <span class="clock-card-label">🌍 地球钟 t</span>
+          <span class="clock-card-label" data-i18n="clock.earth">🌍 地球钟 t</span>
           <span class="clock-card-value" id="dc-earth-val">0.00 年</span>
           <div class="clock-bar-track">
             <div class="clock-bar-fill earth-bar-fill" id="dc-earth-bar"></div>
           </div>
-          <span class="clock-card-hint">坐标时间 · 走得较快</span>
+          <span class="clock-card-hint" data-i18n="clock.earthHint">坐标时间 · 走得较快</span>
         </div>
         <div class="clock-card ship-card">
-          <span class="clock-card-label">🚀 飞船钟 τ</span>
+          <span class="clock-card-label" data-i18n="clock.ship">🚀 飞船钟 τ</span>
           <span class="clock-card-value" id="dc-ship-val">0.00 年</span>
           <div class="clock-bar-track">
             <div class="clock-bar-fill ship-bar-fill" id="dc-ship-bar"></div>
           </div>
-          <span class="clock-card-hint">固有时间 · 走得较慢</span>
+          <span class="clock-card-hint" data-i18n="clock.shipHint">固有时间 · 走得较慢</span>
         </div>
       </div>
       <div class="dual-clock-gap">
-        地球多过的岁月：<span id="dc-gap-val">0.00 年</span>
+        <span data-i18n="clock.gap">地球多过的岁月：</span><span id="dc-gap-val">0.00 年</span>
       </div>
     `;
 
     panel.appendChild(root);
+    this.root = root;
+    applyStatic(root); // 渲染静态标签（当前语言）
 
     this.el = {
       earthVal: root.querySelector('#dc-earth-val'),
@@ -56,6 +59,11 @@ export class DualClockPanel {
       shipBar:  root.querySelector('#dc-ship-bar'),
       gapVal:   root.querySelector('#dc-gap-val')
     };
+  }
+
+  /** 语言切换后刷新静态标签 */
+  refresh() {
+    if (this.root) applyStatic(this.root);
   }
 
   // -- Per-frame update -----------------------------------------------------
@@ -98,12 +106,13 @@ export class DualClockPanel {
     this._prevShip  += (r.shipTime  - this._prevShip)  * alpha;
 
     // Clock digits
-    this._setText('earthVal', this._prevEarth.toFixed(3) + ' 年');
-    this._setText('shipVal',  this._prevShip.toFixed(3)  + ' 年');
+    const yr = t('clock.unitYear');
+    this._setText('earthVal', this._prevEarth.toFixed(3) + ' ' + yr);
+    this._setText('shipVal',  this._prevShip.toFixed(3)  + ' ' + yr);
 
     // Gap display
     const gap = Math.max(0, this._prevEarth - this._prevShip);
-    this._setText('gapVal', gap.toFixed(3) + ' 年');
+    this._setText('gapVal', gap.toFixed(3) + ' ' + yr);
 
     // Bar widths — both fill relative to the larger of the two
     const maxTime = Math.max(this._prevEarth, this._prevShip, 0.001);
