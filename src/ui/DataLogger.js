@@ -26,7 +26,7 @@ export class DataLogger {
   }
 
   exportCsv() {
-    const columns = ['sessionId', 'timestamp', 't', 'type', 'beta', 'gamma', 'frame', 'viewMode', 'missionId', 'quizId', 'answerIndex', 'isCorrect'];
+    const columns = ['sessionId', 'timestamp', 't', 'type', 'beta', 'gamma', 'frame', 'viewMode'];
     const rows = [columns.join(',')];
     for (const e of this.events) {
       rows.push(columns.map(c => JSON.stringify(e[c] ?? '')).join(','));
