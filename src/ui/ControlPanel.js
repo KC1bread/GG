@@ -14,7 +14,6 @@ export class ControlPanel {
     this.startBtn = document.getElementById('start-btn');
 
     this.startBtn.addEventListener('click', () => {
-      // 隐藏介绍面板，显示底部底栏
       document.getElementById('intro-panel').classList.add('hidden');
       document.getElementById('mode-badge').classList.remove('hidden');
       window.rvApp?.panelManager?.showBottomBar();
@@ -77,6 +76,7 @@ export class ControlPanel {
       beta: this.state.beta,
       frame: this.state.frame,
       viewMode: this.state.viewMode,
+      effectMode: this.state.effectMode,
       viewPerspective: this.state.viewPerspective
     };
   }

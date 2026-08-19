@@ -38,6 +38,7 @@ export class PanelManager {
         { id: 'log-panel',          label: '实验记录', isAttached: true },
       ],
       education:     [
+        { id: 'teaching-mode', label: '教学模式', isToggle: true },
         { id: 'high-speed-effects-guide', label: '高速视效概念释义', isToggle: true },
       ],
       visualization: [
@@ -476,6 +477,11 @@ export class PanelManager {
     if (controlId === 'high-speed-effects-guide') {
       window.rvApp?.toggleHighSpeedEffectsGuide?.();
     }
+    if (controlId === 'teaching-mode') {
+      const app = window.rvApp;
+      const next = app?.state?.effectMode === 'teaching' ? 'physical' : 'teaching';
+      app?._setEffectMode?.(next);
+    }
     this._updateCustomControlStates();
   }
 
@@ -489,6 +495,12 @@ export class PanelManager {
         btn.classList.toggle('active', enabled);
         btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
         btn.title = enabled ? '关闭 高速视效概念释义' : '打开 高速视效概念释义';
+      }
+      if (controlId === 'teaching-mode') {
+        const enabled = window.rvApp?.state?.effectMode === 'teaching';
+        btn.classList.toggle('active', enabled);
+        btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        btn.title = enabled ? '关闭教学模式（切回显示模式）' : '打开教学模式';
       }
     });
   }

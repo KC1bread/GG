@@ -549,6 +549,13 @@ canvas { display: block; }
   -webkit-backdrop-filter: blur(6px);
 }
 
+.bottom-bar-btn[data-toggle-id="teaching-mode"].active {
+  background: rgba(255, 196, 92, 0.24);
+  color: #ffe3b0;
+  border-color: rgba(255, 196, 92, 0.55);
+  box-shadow: 0 0 8px rgba(255, 196, 92, 0.2);
+}
+
 .measurement-panel-actions {
   display: flex;
   justify-content: flex-end;
@@ -855,6 +862,92 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   background: rgba(220, 240, 255, 0.7);
   box-shadow: 0 0 4px rgba(160, 210, 255, 0.5);
 }
+.look-label {
+  position: absolute;
+  top: calc(50% + 18px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: rgba(180, 220, 255, 0.0);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.65);
+  transition: color 0.2s ease;
+}
+#crosshair.off-axis .look-label {
+  color: rgba(180, 220, 255, 0.82);
+}
+#crosshair.off-axis .crosshair-h,
+#crosshair.off-axis .crosshair-v {
+  background: rgba(180, 220, 255, 0.82);
+}
+
+#heading-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  color: #ffc45c;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.75);
+}
+#heading-marker.hidden,
+#heading-edge.hidden,
+#look-offset-hint.hidden {
+  display: none;
+}
+.heading-pip {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffc45c;
+  transform: rotate(45deg);
+  box-shadow: 0 0 10px rgba(255, 196, 92, 0.45);
+  background: rgba(255, 196, 92, 0.12);
+}
+
+#heading-edge {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 11;
+}
+.heading-edge-arrow {
+  width: 0;
+  height: 0;
+  border-top: 7px solid transparent;
+  border-bottom: 7px solid transparent;
+  border-left: 14px solid #ffc45c;
+  filter: drop-shadow(0 0 6px rgba(255, 196, 92, 0.7));
+}
+.heading-edge-label {
+  color: #ffc45c;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.75);
+  transform: none;
+}
+
+#look-offset-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 196, 92, 0.35);
+  background: rgba(8, 14, 26, 0.72);
+  color: #ffe3b0;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 /* ---- Relativistic tunnel vignette ---- */
 #tunnel-vignette {
@@ -925,6 +1018,28 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   border-radius: 14px 18px 18px 14px;
 }
 
+.guide-frame-left {
+  top: 18%;
+  left: 0;
+  width: min(300px, 26vw);
+  min-height: 170px;
+  padding: 16px 18px 16px 16px;
+  border-radius: 18px 14px 14px 18px;
+  border-color: rgba(255, 196, 92, 0.28);
+}
+
+.high-speed-effects-guide.teach-on .guide-frame-left {
+  border-color: rgba(255, 196, 92, 0.55);
+  box-shadow:
+    0 0 0 1px rgba(255, 196, 92, 0.08) inset,
+    0 8px 28px rgba(0, 0, 0, 0.22);
+}
+
+.guide-teach-steps {
+  margin-top: 10px !important;
+  color: #ffe3b0 !important;
+}
+
 .guide-frame-bottom {
   left: 18%;
   right: 18%;
@@ -982,6 +1097,9 @@ button:hover { background: rgba(125, 211, 252, 0.22); transform: translateY(-1px
   .measurement-panel { right: 16px; bottom: 228px; }
   .guide-frame-right {
     width: min(280px, 34vw);
+  }
+  .guide-frame-left {
+    width: min(260px, 32vw);
   }
 }
 
