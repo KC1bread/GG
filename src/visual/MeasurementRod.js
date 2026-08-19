@@ -1,12 +1,16 @@
 import * as THREE from 'three';
+import { t } from '../i18n/i18n.js';
 
 const BASE_LENGTH = 5;
 const BODY_RADIUS = 0.096;
 const GLOW_RADIUS = 0.138;
 const TICK_RADIUS = 0.14;
 const TICK_TUBE = 0.012;
-const LABEL_SCALE = { width: 3.3, height: 1.0 };
+// 标签 Sprite：宽高比固定为 4:1，与标签 Canvas（2048×512）一致，避免文字拉伸变形
+const LABEL_SCALE = { width: 3.2, height: 0.8 };
 const SCENE_SCALE = 1 / 3;
+const LABEL_CANVAS_W = 2048;
+const LABEL_CANVAS_H = 512;
 
 const VISUAL_PRESETS = {
   measured: {
@@ -142,8 +146,8 @@ export class MeasurementRod {
 
   _buildLabel() {
     this.labelCanvas = document.createElement('canvas');
-    this.labelCanvas.width = 1536;
-    this.labelCanvas.height = 384;
+    this.labelCanvas.width = LABEL_CANVAS_W;
+    this.labelCanvas.height = LABEL_CANVAS_H;
     this.labelContext = this.labelCanvas.getContext('2d');
 
     this.labelTexture = new THREE.CanvasTexture(this.labelCanvas);
@@ -158,7 +162,14 @@ export class MeasurementRod {
       depthWrite: false,
       depthTest: false
     }));
-    this.labelSprite.scale.set(LABEL_SCALE.width, LABEL_SCALE.height, 1);
+    // 最高绘制优先级：标签永远最后绘制，避免被半透明杆体（黄色平行尺）盖住
+    this.labelSprite.renderOrder = 10;
+    // 垂直尺标签略小于平行尺，确保完整落在相机视野内（不超出右缘被裁）
+    if (this.type === 'perpendicular') {
+      this.labelSprite.scale.set(2.6, 0.65, 1);
+    } else {
+      this.labelSprite.scale.set(LABEL_SCALE.width, LABEL_SCALE.height, 1);
+    }
     this.labelAnchor.add(this.labelSprite);
   }
 
@@ -210,16 +221,41 @@ export class MeasurementRod {
     this._lastLabel = labelText;
     this._lastAccent = accentColor;
 
-    ctx.clearRect(0, 0, this.labelCanvas.width, this.labelCanvas.height);
+    const W = this.labelCanvas.width;
+    const H = this.labelCanvas.height;
+
+    ctx.clearRect(0, 0, W, H);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
-    ctx.font = 'bold 190px Inter, "PingFang SC", sans-serif';
-    ctx.strokeText(lines[0], this.labelCanvas.width / 2, this.labelCanvas.height / 2);
-    ctx.fillStyle = accentColor;
-    ctx.fillText(lines[0], this.labelCanvas.width / 2, this.labelCanvas.height / 2);
+
+    // ── 自适应字号：最长一行不超出画布宽度的 92%，避免长英文标签被裁切 ──
+    let fontSize = 240;
+    const setFont = (size) => {
+      ctx.font = `bold ${size}px Inter, "PingFang SC", "Helvetica Neue", sans-serif`;
+    };
+    setFont(fontSize);
+    let maxLineW = 0;
+    for (const line of lines) {
+      maxLineW = Math.max(maxLineW, ctx.measureText(line).width);
+    }
+    const maxW = W * 0.92;
+    if (maxLineW > maxW) {
+      fontSize = Math.floor(fontSize * (maxW / maxLineW));
+    }
+    fontSize = Math.max(120, fontSize); // 过短文本也不无限放大
+    setFont(fontSize);
+
+    const centerY = H / 2;
+    const lineGap = fontSize * 1.18;
+    for (let i = 0; i < lines.length; i++) {
+      const y = centerY + (i - (lines.length - 1) / 2) * lineGap;
+      ctx.lineWidth = Math.max(8, fontSize * 0.05);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+      ctx.strokeText(lines[i], W / 2, y);
+      ctx.fillStyle = accentColor;
+      ctx.fillText(lines[i], W / 2, y);
+    }
 
     this.labelTexture.needsUpdate = true;
   }
@@ -271,12 +307,15 @@ export class MeasurementRod {
     const halfLength = currentLength * 0.5;
 
     if (this.type === 'parallel') {
+      // 平行尺标签：杆 z 端外侧上方（原始位置），沿视线方向不占用水平视野
       this.labelSprite.position.set(0.28, 0.46, -halfLength - 0.32);
       const accent = effectiveViewMode === 'measured' ? '#ffd36b' : '#9ad8ff';
-      this._drawLabel(['平行尺'], accent);
+      this._drawLabel([t('rod.parallel')], accent);
     } else {
-      this.labelSprite.position.set(halfLength + 0.5, 0.46, 0);
-      this._drawLabel(['垂直尺'], '#eaf4ff');
+      // 垂直尺标签：白色杆右段上方（x 偏右、y 在杆上方），
+      // 中心放在杆端内侧，保证文字完整落在视野内、不被右侧裁切
+      this.labelSprite.position.set(halfLength - 0.9, 0.62, 0);
+      this._drawLabel([t('rod.perpendicular')], '#eaf4ff');
     }
   }
 
