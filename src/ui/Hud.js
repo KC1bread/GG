@@ -1,4 +1,5 @@
 import { computeRelativityState } from '../physics/relativity.js';
+import { t } from '../i18n/i18n.js';
 
 function fmt(value, digits = 3) {
   if (!Number.isFinite(value)) return '--';
@@ -7,8 +8,8 @@ function fmt(value, digits = 3) {
 
 function fmtYears(value) {
   if (!Number.isFinite(value)) return '--';
-  if (value > 1000) return `${value.toExponential(2)} years`;
-  return `${value.toFixed(2)} years`;
+  if (value > 1000) return `${value.toExponential(2)} ${t('hud.unitYears')}`;
+  return `${value.toFixed(2)} ${t('hud.unitYears')}`;
 }
 
 export class Hud {
@@ -37,9 +38,9 @@ export class Hud {
   update() {
     // Terrell 档位名称映射
     const _terrellNames = {
-      lorentzOnly: '纯长度收缩',
-      precise: 'Penrose-Terrell精确',
-      enhanced: '增强教学'
+      lorentzOnly: t('badge.terrell.lorentzOnly'),
+      precise: t('badge.terrell.precise'),
+      enhanced: t('badge.terrell.enhanced')
     };
 
     const r = computeRelativityState(this.state);
@@ -47,18 +48,18 @@ export class Hud {
     this._setText('gamma', fmt(r.gamma, 3));
     this._setText('earthTime', fmtYears(r.earthTime));
     this._setText('shipTime', fmtYears(r.shipTime));
-    this._setText('earthDistance', `${fmt(r.earthDistance, 2)} ly`);
-    this._setText('shipDistance', `${fmt(r.shipDistance, 2)} ly`);
+    this._setText('earthDistance', `${fmt(r.earthDistance, 2)} ${t('hud.unitLy')}`);
+    this._setText('shipDistance', `${fmt(r.shipDistance, 2)} ${t('hud.unitLy')}`);
     this._setText('eta', `${fmtYears(r.etaEarth)} / ${fmtYears(r.etaShip)}`);
     this._setText('lengthRatio', fmt(r.lengthRatio, 3));
 
     // 顶部状态栏内容
-    const frameLabel = this.state.frame === 'earth' ? 'Earth'
-      : this.state.frame === 'ship' ? 'Ship'
-      : 'Side-by-side';
+    const frameLabel = this.state.frame === 'earth' ? t('badge.frame.earth')
+      : this.state.frame === 'ship' ? t('badge.frame.ship')
+      : t('badge.frame.side');
     const perspectiveLabel = this.state.viewPerspective === 'firstPerson' ? '1P' : '3P';
     const modeLabel = this.state.viewMode === 'measured' ? 'Measured' : 'Observed';
-    const effectLabel = this.state.effectMode === 'teaching' ? '教学模式' : '显示模式';
+    const effectLabel = this.state.effectMode === 'teaching' ? t('badge.effect.teaching') : t('badge.effect.physical');
     let modeFull = `${modeLabel} · ${effectLabel}`;
     if (this.state.viewMode === 'observed') {
       const terrellName = _terrellNames[this.state.terrellMode] || this.state.terrellMode;

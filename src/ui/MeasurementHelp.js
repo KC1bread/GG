@@ -5,40 +5,31 @@
  * · 仅在单模式（earth / ship）启用；并列模式（sideBySide）不弹卡
  * · 弹层复用时空图那套玻璃 Popover 样式（st-help-*），每次只显示一个
  * · 点击空白处 / Esc / × 关闭；不修改任何渲染与拖拽逻辑
+ * · 文案三语化：内容取自 i18n 字典，切语言时已打开的弹层即时刷新
  */
+import { t, onLangChange } from '../i18n/i18n.js';
 
-// ── 概念文案（HTML，支持 <strong> 加粗关键词；第一句话单独一行） ──
-const CONCEPT_CONTENT = {
+// ── 概念元信息（颜色 + i18n key；正文为 HTML，支持 <strong> 加粗） ──
+const CONCEPT_META = {
   parallel: {
-    title: '平行尺',
     color: '#ffd36b',
-    body:
-      '<strong>平行尺：沿飞船运动方向</strong>' +
-      '<br>🌍 地球参考系中，沿运动方向缩短至 √(1−β²) 倍；' +
-      '🚀 飞船参考系中与飞船相对静止，长度不变。' +
-      '<br><strong>Measured（测量模式）</strong>：地球参考系下展示纯长度收缩，' +
-      '实际长度 = 固有长度 × √(1−β²)。' +
-      '<br><strong>Observed（观察模式）</strong>：地球参考系下叠加 Penrose-Terrell 旋转，' +
-      '光传播延迟与光行差使尺子呈与视角相关的倾斜。' +
-      '<div class="st-help-sub"><strong>纯长度收缩</strong>：仅展示测量收缩，不旋转。</div>' +
-      '<div class="st-help-sub"><strong>P-T 精确</strong>：旋转角按 θ = asin(β·sinα) 计算。</div>' +
-      '<div class="st-help-sub"><strong>增强教学</strong>：旋转角 ×1.5 放大，便于观察。</div>'
+    titleKey: 'mhelp.parallel.title',
+    bodyKey: 'mhelp.parallel.body'
   },
   perpendicular: {
-    title: '垂直尺',
     color: '#eaf4ff',
-    body:
-      '<strong>垂直尺：垂直于运动方向</strong>' +
-      '<br>垂直方向不发生长度收缩，在任意参考系中长度恒为固有长度 5.00，' +
-      '作为参照与平行尺对比。'
+    titleKey: 'mhelp.perp.title',
+    bodyKey: 'mhelp.perp.body'
   }
 };
 
 export class MeasurementHelp {
   constructor() {
     this._currentKey = null; // 'parallel' | 'perpendicular' | null
+    this._currentAnchor = null;
     this.el = null;
     this._viewMode = 'measured'; // 用于平行尺弹卡标题颜色（measured=黄 / observed=蓝）
+    onLangChange(() => this.refresh());
   }
 
   _safe() {
@@ -51,14 +42,14 @@ export class MeasurementHelp {
     pop.className = 'st-help-popover';
     pop.id = 'measurement-help-popover';
     pop.setAttribute('role', 'dialog');
-    pop.setAttribute('aria-label', '测量尺概念说明');
+    pop.setAttribute('aria-label', t('mhelp.aria'));
     pop.setAttribute('aria-hidden', 'true');
     pop.innerHTML = `
       <div class="st-help-arrow"></div>
       <div class="st-help-head">
         <span class="st-help-dot"></span>
         <span class="st-help-title"></span>
-        <button class="st-help-close" aria-label="关闭" title="关闭">×</button>
+        <button class="st-help-close" aria-label="${t('mhelp.close')}" title="${t('mhelp.close')}">×</button>
       </div>
       <div class="st-help-body"></div>
     `;
@@ -133,18 +124,18 @@ export class MeasurementHelp {
   /** key: 'parallel' | 'perpendicular'；anchor: {x, y} 屏幕坐标 */
   showConcept(key, anchor) {
     if (!this._safe()) return;
-    let content = CONCEPT_CONTENT[key];
-    if (!content) return;
+    const meta = CONCEPT_META[key];
+    if (!meta) return;
     // 平行尺标题颜色随模式：Observed=蓝（与杆颜色一致），Measured=黄
-    if (key === 'parallel' && this._viewMode === 'observed') {
-      content = { ...content, color: '#9ad8ff' };
-    }
+    let color = meta.color;
+    if (key === 'parallel' && this._viewMode === 'observed') color = '#9ad8ff';
     this._currentKey = key;
-    this.elTitle.textContent = content.title;
-    this.elTitle.style.color = content.color;
-    this.elDot.style.background = content.color;
-    this.elDot.style.boxShadow = `0 0 8px ${content.color}`;
-    this.elBody.innerHTML = content.body; // 支持 <strong> 加粗关键词
+    this._currentAnchor = anchor;
+    this.elTitle.textContent = t(meta.titleKey);
+    this.elTitle.style.color = color;
+    this.elDot.style.background = color;
+    this.elDot.style.boxShadow = `0 0 8px ${color}`;
+    this.elBody.innerHTML = t(meta.bodyKey); // 支持 <strong> 加粗关键词
     this._position(anchor);
     this.el.setAttribute('aria-hidden', 'false');
   }
@@ -154,10 +145,24 @@ export class MeasurementHelp {
     this._viewMode = mode === 'observed' ? 'observed' : 'measured';
     // 弹层已打开且是平行尺 → 立即刷新颜色
     if (this._currentKey === 'parallel' && this.el) {
-      const color = this._viewMode === 'observed' ? '#9ad8ff' : CONCEPT_CONTENT.parallel.color;
+      const color = this._viewMode === 'observed' ? '#9ad8ff' : CONCEPT_META.parallel.color;
       this.elTitle.style.color = color;
       this.elDot.style.background = color;
       this.elDot.style.boxShadow = `0 0 8px ${color}`;
+    }
+  }
+
+  /** 语言切换后：更新 aria 文本；若弹层已打开则重新渲染内容 */
+  refresh() {
+    if (!this._safe()) return;
+    this.el.setAttribute('aria-label', t('mhelp.aria'));
+    const closeBtn = this.el.querySelector('.st-help-close');
+    if (closeBtn) {
+      closeBtn.title = t('mhelp.close');
+      closeBtn.setAttribute('aria-label', t('mhelp.close'));
+    }
+    if (this._currentKey && this._currentAnchor) {
+      this.showConcept(this._currentKey, this._currentAnchor);
     }
   }
 

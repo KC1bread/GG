@@ -19,6 +19,8 @@ import { EngineAudio } from '../audio/EngineAudio.js';
 import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRatio } from '../physics/relativity.js';
 import { terrellTransformMatrix } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
+import { t, L, onLangChange, applyStatic } from '../i18n/i18n.js';
+import { showErrorBanner } from './ErrorBanner.js';
 
 /**
  * RelativisticVoyagerApp — main application controller.
@@ -132,14 +134,58 @@ export class RelativisticVoyagerApp {
 
   init() {
     this.logger = new DataLogger();
-    this.setupThree();
-    this.setupScene();
-    this.setupUi();
+    this._initErrors = [];
+
+    // 分步容错：任何一步失败不阻断其余功能（2D 面板仍可用）
+    const step = (name, fn) => {
+      try {
+        fn();
+      } catch (err) {
+        console.error(`[RV] ${name} 初始化失败：`, err);
+        this._initErrors.push({ name, err });
+      }
+    };
+
+    step('3D 渲染器', () => this.setupThree());
+    step('3D 场景', () => this.setupScene());
+    step('界面', () => this.setupUi());
     this.setupKeyboard();
-    this.setupMouse();
-    this.setupResize();
+    step('鼠标交互', () => this.setupMouse());
+    step('窗口自适应', () => this.setupResize());
+
+    if (this._initErrors.length) {
+      showErrorBanner(
+        '初始化部分失败（2D 面板仍可用）',
+        this._initErrors
+          .map((e) => `[${e.name}] ${(e.err && e.err.message) || e.err}`)
+          .join('\n')
+      );
+    }
+
     this.logger.log('app_init');
-    this.renderer.setAnimationLoop(() => this.update());
+
+    if (this.renderer) {
+      this.renderer.setAnimationLoop(() => this.update());
+    } else {
+      this._startFallbackLoop();
+    }
+  }
+
+  /** WebGL 不可用时的兜底循环：仅驱动 2D 面板（HUD / 双时钟 / 时空图） */
+  _startFallbackLoop() {
+    const loop = () => {
+      try {
+        const r = computeRelativityState(this.state);
+        this.hud?.update();
+        this.dualClock?.update(r);
+        this.spacetimeDiagram?.update();
+        this._updateMeasurementPanel(r);
+      } catch (err) {
+        // 单帧错误忽略，避免死循环抛错
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
   }
 
   // ---- Three.js / renderer / camera ------------------------------------------
@@ -165,8 +211,14 @@ export class RelativisticVoyagerApp {
     document.body.appendChild(VRButton.createButton(this.renderer));
 
     // Relativistic post-process (full-screen aberration + Doppler + beaming)
-    this.postProcess = new RelativisticPostProcess();
-    this.postProcess.init(this.renderer, this.camera);
+    // 失败时降级为无后处理，不影响主场景渲染
+    try {
+      this.postProcess = new RelativisticPostProcess();
+      this.postProcess.init(this.renderer, this.camera);
+    } catch (err) {
+      console.error('[RV] 后处理初始化失败，已降级（无相对论后处理）：', err);
+      this.postProcess = null;
+    }
   }
 
   // ---- Scene objects ---------------------------------------------------------
@@ -213,10 +265,15 @@ export class RelativisticVoyagerApp {
     this.comparisonEarthSpacetime = null;
     this.comparisonShipSpacetime  = null;
 
-    // ── 双测量尺 3D 预览 ──
+    // ── 双测量尺 3D 预览（WebGL 小窗；创建失败则置空，App 各处以 ?. 调用） ──
     this.measurementPreviewCanvas = document.getElementById('measurement-preview-canvas');
     if (this.measurementPreviewCanvas) {
-      this.measurementPreview = new MeasurementPreview(this.measurementPreviewCanvas);
+      try {
+        this.measurementPreview = new MeasurementPreview(this.measurementPreviewCanvas);
+      } catch (err) {
+        console.error('[RV] 双测量尺预览初始化失败，已跳过：', err);
+        this.measurementPreview = null;
+      }
     }
     this.measurementResetBtn = document.getElementById('measurement-reset-btn');
     if (this.measurementResetBtn) {
@@ -243,8 +300,14 @@ export class RelativisticVoyagerApp {
     this.comparisonEarthCanvas = document.getElementById('comparison-earth-canvas');
     this.comparisonShipCanvas  = document.getElementById('comparison-ship-canvas');
     if (this.comparisonEarthCanvas && this.comparisonShipCanvas) {
-      this.comparisonEarthPreview = new MeasurementPreview(this.comparisonEarthCanvas);
-      this.comparisonShipPreview  = new MeasurementPreview(this.comparisonShipCanvas);
+      try {
+        this.comparisonEarthPreview = new MeasurementPreview(this.comparisonEarthCanvas);
+        this.comparisonShipPreview  = new MeasurementPreview(this.comparisonShipCanvas);
+      } catch (err) {
+        console.error('[RV] 并列预览初始化失败，已跳过：', err);
+        this.comparisonEarthPreview = null;
+        this.comparisonShipPreview  = null;
+      }
     }
     this.comparisonEls = {
       modeEarth:     document.getElementById('comp-mode-earth'),
@@ -274,7 +337,7 @@ export class RelativisticVoyagerApp {
       const toggleBadgeBtn = document.createElement('button');
       toggleBadgeBtn.className = 'panel-action-btn';
       toggleBadgeBtn.textContent = '●';
-      toggleBadgeBtn.title = '切换顶部信息状态栏';
+      toggleBadgeBtn.title = t('pm.badge.toggle');
       toggleBadgeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const badge = document.getElementById('mode-badge');
@@ -310,6 +373,24 @@ export class RelativisticVoyagerApp {
     };
 
     this.onStateChanged();
+
+    // 语言切换：全局刷新所有动态文本（面板/图例/弹层各自监听）
+    this._setupI18n();
+  }
+
+  /** 语言切换总调度：静态文本 + HUD + 双时钟 + 测量面板 + 时空图 + 弹层（不写日志） */
+  _setupI18n() {
+    onLangChange(() => {
+      applyStatic();
+      this.hud?.update();
+      this.dualClock?.refresh();
+      this._updateMeasurementPanel(computeRelativityState(this.state));
+      this.spacetimeDiagram?.update();
+      this.spacetimeHelp?.onFrameChange?.();
+      this.measurementHelp?.setViewMode?.(this.state.viewMode);
+      this._updateTerrellVisibility?.();
+      this.panelManager?._updateCustomControlStates?.();
+    });
   }
 
   // ---- Keyboard ---------------------------------------------------------------
@@ -485,11 +566,11 @@ export class RelativisticVoyagerApp {
       if (offAxis) {
         const deg = Math.round(offsetDeg);
         if (this._freeLookToggled) {
-          hud.hint.textContent = `观察中 · 偏离航向 ${deg}° · C 或 Esc 回正`;
+          hud.hint.textContent = t('hint.observing', { deg });
         } else if (this._freeLookActive) {
-          hud.hint.textContent = `偏离航向 ${deg}° · 松开右键回正`;
+          hud.hint.textContent = t('hint.peek', { deg });
         } else {
-          hud.hint.textContent = `偏离航向 ${deg}° · C 回正`;
+          hud.hint.textContent = t('hint.off', { deg });
         }
       }
     }
@@ -548,7 +629,7 @@ export class RelativisticVoyagerApp {
       hud.edgeArrow.style.transform = `rotate(${angle}rad)`;
     }
     if (hud.edgeLabel) {
-      hud.edgeLabel.textContent = behind ? '航向在身后' : '航向';
+      hud.edgeLabel.textContent = behind ? t('ch.headingBehind') : t('ch.heading');
     }
     hud.edge.classList.remove('hidden');
   }
@@ -654,16 +735,16 @@ export class RelativisticVoyagerApp {
     const card = document.getElementById('planet-info-card');
     card.innerHTML = `
       <div class="planet-info-header">
-        <span class="planet-info-name">${info.nameCN} ${info.nameEN}</span>
-        <span class="planet-info-type">${info.type}</span>
+        <span class="planet-info-name">${L(info.name)}</span>
+        <span class="planet-info-type">${L(info.type)}</span>
       </div>
       <div class="planet-info-body">
-        <div class="planet-info-row"><span>直径 Diameter</span><span>${info.diameter}</span></div>
-        <div class="planet-info-row"><span>与太阳距离</span><span>${info.distSun}</span></div>
-        <div class="planet-info-row"><span>公转周期</span><span>${info.orbitalPeriod}</span></div>
-        <div class="planet-info-row"><span>温度</span><span>${info.temperature}</span></div>
-        <div class="planet-info-row"><span>卫星 Moons</span><span>${info.moons}</span></div>
-        <div class="planet-info-fact">💡 ${info.fact}</div>
+        <div class="planet-info-row"><span>${t('planet.diameter')}</span><span>${info.diameter}</span></div>
+        <div class="planet-info-row"><span>${t('planet.distSun')}</span><span>${L(info.distSun)}</span></div>
+        <div class="planet-info-row"><span>${t('planet.period')}</span><span>${L(info.orbitalPeriod)}</span></div>
+        <div class="planet-info-row"><span>${t('planet.temp')}</span><span>${L(info.temperature)}</span></div>
+        <div class="planet-info-row"><span>${t('planet.moons')}</span><span>${info.moons}</span></div>
+        <div class="planet-info-fact">💡 ${L(info.fact)}</div>
       </div>
     `;
 
@@ -818,7 +899,7 @@ export class RelativisticVoyagerApp {
     });
     this._updateMeasurementPanel(computed);
     this.hud.update();
-    this.spacetimeDiagram.update();
+    this.spacetimeDiagram?.update();
     this.spacetimeHelp?.onFrameChange();
     // 测量尺弹层：同步显示模式（平行尺标题颜色 黄=Measured / 蓝=Observed）
     this.measurementHelp?.setViewMode(this.state.viewMode);
@@ -853,7 +934,11 @@ export class RelativisticVoyagerApp {
   /** 当前显示模式 + Terrell 档位（简略文字，仅双测量尺面板使用） */
   _modeLabel() {
     if (this.state.viewMode !== 'observed') return 'Measured';
-    const names = { lorentzOnly: '纯长度收缩', precise: 'P-T 精确', enhanced: '增强教学' };
+    const names = {
+      lorentzOnly: t('badge.terrell.lorentzOnly'),
+      precise: t('badge.terrell.precise'),
+      enhanced: t('badge.terrell.enhanced')
+    };
     return `Observed · ${names[this.state.terrellMode] || this.state.terrellMode}`;
   }
 
@@ -939,7 +1024,23 @@ export class RelativisticVoyagerApp {
 
   // ---- Main update loop ------------------------------------------------------
 
+  /**
+   * 每帧主循环（含兜底）：单帧异常自动跳过并限频告警，
+   * 避免 WebGL context 抖动 / 画布尺寸抖动导致画面反复失效。
+   */
   update() {
+    try {
+      this._updateFrame();
+    } catch (err) {
+      const now = performance.now();
+      if (now - (this._lastFrameErrorAt || 0) > 2000) {
+        this._lastFrameErrorAt = now;
+        console.warn('[RV] 帧更新异常（已自动跳过该帧）：', err && err.message ? err.message : err);
+      }
+    }
+  }
+
+  _updateFrame() {
     // ── TEMP 性能探测（定位卡顿根因用，测完删除） ──
     if (!this._perf) {
       this._perf = { sections: {}, frames: 0, lastLog: performance.now() };
@@ -1161,7 +1262,7 @@ export class RelativisticVoyagerApp {
     }
     if (this.highSpeedGuideReadouts.effect) {
       this.highSpeedGuideReadouts.effect.textContent =
-        this.state.effectMode === 'teaching' ? '教学模式' : '显示模式';
+        this.state.effectMode === 'teaching' ? t('guide.effect.teaching') : t('guide.effect.physical');
     }
 
     // Aberration / Doppler follow velocity, not camera look.
@@ -1245,8 +1346,8 @@ export class RelativisticVoyagerApp {
           terrellMode: observed ? this.state.terrellMode : 'lorentzOnly'
         };
         const shipRodState = { ...rodPhysicsState, frame: 'ship', terrellMode: 'lorentzOnly' };
-        this.comparisonEarthPreview.update({ physicsState: earthRodState, shipPosition: this.shipPosition, visible: true });
-        this.comparisonShipPreview.update({ physicsState: shipRodState, shipPosition: this.shipPosition, visible: true });
+        this.comparisonEarthPreview?.update({ physicsState: earthRodState, shipPosition: this.shipPosition, visible: true });
+        this.comparisonShipPreview?.update({ physicsState: shipRodState, shipPosition: this.shipPosition, visible: true });
 
         const earthParallel = 5 * (lengthContractionRatio(this.state.beta));
         if (this.comparisonEls.modeEarth)    this.comparisonEls.modeEarth.textContent    = this._modeLabel();
@@ -1283,10 +1384,10 @@ export class RelativisticVoyagerApp {
     this.hud.update();
     _perfMark('hud');
 
-    this.dualClock.update(r);
+    this.dualClock?.update(r);
     _perfMark('clock');
 
-    if (!isSideBySide) this.spacetimeDiagram.update();
+    if (!isSideBySide) this.spacetimeDiagram?.update();
     _perfMark('spacetime');
 
     _perfMark('panels');
