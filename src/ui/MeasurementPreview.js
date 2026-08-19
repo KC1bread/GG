@@ -7,7 +7,8 @@ export class MeasurementPreview {
     this.canvas = canvas;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(24, 1, 0.1, 100);
-    this.camera.position.set(0, 8, 12.0);
+    // 恢复原始相机位：尺子大小与最初完全一致
+    this.camera.position.set(0, 8, 12);
     this.camera.lookAt(0, 0, 0);
 
     this.renderer = new THREE.WebGLRenderer({
@@ -19,6 +20,8 @@ export class MeasurementPreview {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
     this.previewRoot = new THREE.Group();
+    // 满尺寸显示两根测量尺（5 单位），不做整体缩小
+    this.previewRoot.scale.setScalar(1);
     this.scene.add(this.previewRoot);
     this.baseEuler = new THREE.Euler(0, 0, 0, 'YXZ');
     this.dragYaw = 0;
@@ -61,6 +64,7 @@ export class MeasurementPreview {
 
     // ── 按需渲染缓存（避免每帧无谓的 WebGL pass） ──
     this._dirty = true;
+    this._renderedOnce = false;
     this._lastBetaKey = null;
     this._lastModeKey = null;
     this._lastShipKey = null;
@@ -157,18 +161,27 @@ export class MeasurementPreview {
   }
 
   resize() {
-    const width = this.canvas.clientWidth;
-    const height = this.canvas.clientHeight;
+    // 以父容器尺寸为准：canvas 默认属性是 300×150，
+    // 若直接读 canvas.clientWidth，首次布局可能拿到默认值，把画布撑得比容器宽，
+    // 导致内容右缘（英文标签）超出 wrap 的 overflow:hidden 被裁掉（画面"偏左/中间截断"）。
+    const wrap = this.canvas.parentElement;
+    const width = wrap ? wrap.clientWidth : this.canvas.clientWidth;
+    const height = wrap ? wrap.clientHeight : this.canvas.clientHeight;
     if (!width || !height) return;
     if (width === this._lastWidth && height === this._lastHeight) return;
 
     this._lastWidth = width;
     this._lastHeight = height;
 
-    this.renderer.setPixelRatio(Math.min(1.5, (window.devicePixelRatio || 1)));
-    this.renderer.setSize(width, height, false);
+    // 高分辨率渲染：像素缓冲按设备像素比对齐（最高 2×），CSS 显示尺寸保持 1:1
+    // 注意 updateStyle 必须为 true：否则 canvas 显示尺寸=缓冲像素（放大发糊且超出容器被裁）
+    this.renderer.setPixelRatio(Math.min(2, (window.devicePixelRatio || 1)));
+    this.renderer.setSize(width, height);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+
+    // 尺寸就绪/变化 → 强制下一帧渲染（解决面板刚打开时画面为空的问题）
+    this._dirty = true;
   }
 
   resetView() {
@@ -199,7 +212,9 @@ export class MeasurementPreview {
       + ',' + Math.round(shipPosition?.y ?? 0)
       + ',' + Math.round(shipPosition?.z ?? 0);
     const dragKey = Math.round(this.dragYaw * 200) + ',' + Math.round(this.dragPitch * 200);
+    // _renderedOnce：画布从未渲染过时强制渲染（面板刚打开、尺寸刚就绪的兜底）
     const needsRender = this._dirty
+      || !this._renderedOnce
       || betaKey !== this._lastBetaKey
       || modeKey !== this._lastModeKey
       || shipKey !== this._lastShipKey
@@ -238,6 +253,7 @@ export class MeasurementPreview {
     if (needsRender && this.canvas.clientWidth >= 2 && this.canvas.clientHeight >= 2) {
       this.renderer.render(this.scene, this.camera);
       this._dirty = false;
+      this._renderedOnce = true;
       this._lastBetaKey = betaKey;
       this._lastModeKey = modeKey;
       this._lastShipKey = shipKey;
