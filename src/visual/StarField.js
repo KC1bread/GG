@@ -7,6 +7,7 @@ import * as THREE from 'three';
  * - 保持了原版所有 Shader、WebGL 显式传参和粒子像素大小优化。
  * - 引入“核心条带核”：在银心最中央的一小条带区域内，星星密集度进一步暴增。
  * - 纯数学对数与多层级指数复合衰减，在保证中心区有极窄、极高密度核心的同时，依然维持绝对顺滑无断层的视觉过渡。
+ * - 高速流动隧道：最大速度时星星向外径向流动（starbow 流），聚拢中心呈时空弯曲漩涡，隧道感随速度增强。
  */
 
 // 设定银河系中心的遥远天球方向向量（从太阳系望去，该方向将出现极为明显的群星聚集）
@@ -96,6 +97,8 @@ attribute float aBaseAlpha;
 attribute float aTwinklePhase;
 attribute float aTwinkleSpeed;
 attribute float aTwinkleAmp;
+attribute float aStreamPhase;
+attribute float aStreamSpeed;
 attribute vec3 aColor; 
 
 uniform float uBeta;
@@ -106,6 +109,8 @@ uniform float uPointScale;
 uniform float uAberrationExp;
 uniform float uDopplerGain;
 uniform float uTeachBlend;
+uniform float uStreamMax;
+uniform float uWarp;
 
 varying vec3 vBaseColor;
 varying float vDoppler;
@@ -121,6 +126,32 @@ void main() {
 
   vec3 velocityDir = normalize(uVelocityDir);
   float betaPhys = clamp(uBeta, 0.0, 0.999);
+
+  // —— 星空流动 + 时空弯曲隧道 ——
+  // 1) 流动：星星随速度/时间从聚拢中心向外径向流动并循环，速度越高流得越快越远
+  float streamGate = smoothstep(0.12, 0.55, betaPhys);
+  float streamPhase = fract(aStreamPhase + uTime * aStreamSpeed * (0.05 + betaPhys));
+  float streamAngle = streamPhase * uStreamMax * streamGate;
+
+  // 2) 时空弯曲：靠近聚拢中心的星被额外拉向中心，形成隧道漩涡（越靠近中心越强）
+  float theta0 = acos(clamp(dot(dir, velocityDir), -1.0, 1.0));
+  float warp = uWarp * betaPhys * (1.0 - theta0 / 3.14159265);
+
+  // 3) 合成一次 Rodrigues 旋转：先向外流动(+streamAngle) 再朝中心弯曲(-warp)
+  float dTheta = streamAngle - warp;
+  vec3 rotAxis = cross(velocityDir, dir);
+  float axisLen = length(rotAxis);
+  if (axisLen > 0.0001) {
+    rotAxis /= axisLen;
+    float rc = cos(dTheta);
+    float rs = sin(dTheta);
+    dir = dir * rc + cross(rotAxis, dir) * rs;
+  }
+  dir = normalize(dir);
+
+  // 循环处的淡入淡出：隐藏星星在流场末端跳回中心的“瞬移”
+  float streamFade = mix(1.0, smoothstep(0.0, 0.08, streamPhase) * (1.0 - smoothstep(0.90, 1.0, streamPhase)), streamGate);
+
   float betaAberr = 1.0 - pow(max(0.0, 1.0 - betaPhys), max(1.0, uAberrationExp));
   betaAberr = clamp(betaAberr, 0.0, 0.999);
   float gammaAberr = inversesqrt(max(0.000001, 1.0 - betaAberr * betaAberr));
@@ -154,7 +185,7 @@ void main() {
 
   float forwardVisible = 1.0 - smoothstep(3.2, 4.2, dopplerVis);
   float rearVisible = mix(mix(0.55, 0.92, uTeachBlend), 1.0, smoothstep(0.01, 0.12, dopplerVis));
-  float visibility = forwardVisible * rearVisible;
+  float visibility = forwardVisible * rearVisible * streamFade;
 
   float pointSize = aBaseSize * sizeBoost * twinkle * uPointScale * uPixelRatio;
   pointSize *= (600.0 / max(1.0, -mvPosition.z));
@@ -276,6 +307,8 @@ export class StarField {
     const twinklePhase = new Float32Array(this.count);
     const twinkleSpeed = new Float32Array(this.count);
     const twinkleAmp = new Float32Array(this.count);
+    const streamPhase = new Float32Array(this.count);
+    const streamSpeed = new Float32Array(this.count);
 
     for (let i = 0; i < this.count; i++) {
       const dir = generateRealisticStarDirection();
@@ -297,7 +330,9 @@ export class StarField {
       baseAlphas[i] = starAlpha(size, centerFactor);
       twinklePhase[i] = Math.random() * Math.PI * 2;
       twinkleSpeed[i] = 0.3 + Math.random() * 1.5;
-      twinkleAmp[i] = 0.02 + Math.random() * 0.04; 
+      twinkleAmp[i] = 0.02 + Math.random() * 0.04;
+      streamPhase[i] = Math.random();
+      streamSpeed[i] = 0.3 + Math.random() * 0.9;
     }
 
     const geometry = new THREE.BufferGeometry();
@@ -308,6 +343,8 @@ export class StarField {
     geometry.setAttribute('aTwinklePhase', new THREE.BufferAttribute(twinklePhase, 1));
     geometry.setAttribute('aTwinkleSpeed', new THREE.BufferAttribute(twinkleSpeed, 1));
     geometry.setAttribute('aTwinkleAmp', new THREE.BufferAttribute(twinkleAmp, 1));
+    geometry.setAttribute('aStreamPhase', new THREE.BufferAttribute(streamPhase, 1));
+    geometry.setAttribute('aStreamSpeed', new THREE.BufferAttribute(streamSpeed, 1));
     geometry.computeBoundingSphere();
 
     this.material = new THREE.ShaderMaterial({
@@ -326,7 +363,9 @@ export class StarField {
         uPointScale: { value: 1.5 },
         uAberrationExp: { value: 1.06 },
         uDopplerGain: { value: 1.0 },
-        uTeachBlend: { value: 1 } 
+        uTeachBlend: { value: 1 },
+        uStreamMax: { value: 2.0 },
+        uWarp: { value: 0.55 }
       }
     });
 
