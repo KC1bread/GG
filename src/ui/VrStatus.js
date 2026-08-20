@@ -38,7 +38,7 @@ export class VrStatus {
         this._controllerCount > 0
           ? `已连接 ${this._controllerCount} 只手柄。`
           : '已进入 VR，未检测到手柄。',
-        '左摇杆前进/转向 · 扳机加速 · 握把减速 · 主键跳转行星。');
+        '右手摇杆前进/转向 · 右扳机加速 · 左扳机减速 · 左X键跳转行星。');
     } else if (support === 'unsupported') {
       this._render('🚫', '不支持 VR',
         '当前浏览器或访问环境不支持 WebXR。',

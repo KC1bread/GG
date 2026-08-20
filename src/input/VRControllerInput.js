@@ -6,6 +6,10 @@ import * as THREE from 'three';
  * Maps standard WebXR gamepad input (buttons/axes/handedness) to the app's
  * shared `keys` flight state, so App.js.update()'s flight model runs
  * unchanged. Works with Quest Touch / Index / Vive / PCVR.
+ *
+ * 双手方案：
+ *   右手柄  摇杆=前进/后退/转向，扳机=加速 β+
+ *   左手柄  扳机=减速 β−，X 键=跳转到下一颗行星
  */
 const AXIS_DEADZONE = 0.15;
 
@@ -30,18 +34,17 @@ export function mapGamepadToActions(gamepad, handedness) {
     shift: false, ctrl: false,
   };
 
-  // 单手柄（左手）飞行：仅左手柄产生飞行输入，右手柄忽略
-  if (handedness !== 'left') return actions;
-
-  // 左摇杆（飞行杆式）：Y=前进/后退，X=转向
-  if (axisY >  AXIS_DEADZONE) actions.forward = true;
-  if (axisY < -AXIS_DEADZONE) actions.backward = true;
-  if (axisX < -AXIS_DEADZONE) actions.left = true;
-  if (axisX >  AXIS_DEADZONE) actions.right = true;
-
-  // 扳机=加速 β+（shift），握把=减速 β−（ctrl）
-  actions.shift = !!(buttons[0] && buttons[0].pressed);
-  actions.ctrl  = !!(buttons[1] && buttons[1].pressed);
+  if (handedness === 'right') {
+    // 右手柄：摇杆飞行（Y=前进/后退，X=转向），扳机=加速 β+（shift）
+    if (axisY >  AXIS_DEADZONE) actions.forward = true;
+    if (axisY < -AXIS_DEADZONE) actions.backward = true;
+    if (axisX < -AXIS_DEADZONE) actions.left = true;
+    if (axisX >  AXIS_DEADZONE) actions.right = true;
+    actions.shift = !!(buttons[0] && buttons[0].pressed);
+  } else if (handedness === 'left') {
+    // 左手柄：扳机=减速 β−（ctrl）
+    actions.ctrl = !!(buttons[0] && buttons[0].pressed);
+  }
 
   return actions;
 }
@@ -107,7 +110,7 @@ export class VRControllerInput {
   }
 
   _handleButtonEdges(handedness, buttons) {
-    // 单手柄（左手）飞行：仅左主键跳转到下一颗行星
+    // 左手柄 X 键跳转到下一颗行星
     if (handedness !== 'left') return;
 
     const now = buttons.map((b) => !!b.pressed);
