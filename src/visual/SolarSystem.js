@@ -6,62 +6,94 @@ import * as THREE from 'three';
  * All 8 planets have detailed procedural textures.
  */
 
-// ── Planet scientific data ──────────────────────────────────────────────────
+// ── Planet scientific data（可本地化字段为 {zh, en} 结构，由 L() 取值） ──
 export const PLANET_INFO = {
   Mercury: {
-    nameCN: '水星', nameEN: 'Mercury', type: '岩石行星 (Rocky)',
-    diameter: '4,879 km', distSun: '5790 万 km (0.39 AU)', orbitalPeriod: '88 天',
-    temperature: '-180°C ~ 430°C', moons: '0',
-    fact: '水星是太阳系中最小的行星，也是距离太阳最近的行星，几乎没有大气层。',
+    name: { zh: '水星', en: 'Mercury' },
+    type: { zh: '岩石行星 (Rocky)', en: 'Rocky planet' },
+    diameter: '4,879 km',
+    distSun: { zh: '5790 万 km (0.39 AU)', en: '57.9 million km (0.39 AU)' },
+    orbitalPeriod: { zh: '88 天', en: '88 days' },
+    temperature: { zh: '-180°C ~ 430°C', en: '-180°C ~ 430°C' },
+    moons: '0',
+    fact: { zh: '水星是太阳系中最小的行星，也是距离太阳最近的行星，几乎没有大气层。', en: 'Mercury is the smallest planet in the solar system and the closest to the Sun, with almost no atmosphere.' },
     color: '#b0ada6'
   },
   Venus: {
-    nameCN: '金星', nameEN: 'Venus', type: '岩石行星 (Rocky)',
-    diameter: '12,104 km', distSun: '1.08 亿 km (0.72 AU)', orbitalPeriod: '225 天',
-    temperature: '462°C (平均)', moons: '0',
-    fact: '金星是太阳系中最热的行星，浓厚的二氧化碳大气层造成了极端的温室效应。',
+    name: { zh: '金星', en: 'Venus' },
+    type: { zh: '岩石行星 (Rocky)', en: 'Rocky planet' },
+    diameter: '12,104 km',
+    distSun: { zh: '1.08 亿 km (0.72 AU)', en: '108 million km (0.72 AU)' },
+    orbitalPeriod: { zh: '225 天', en: '225 days' },
+    temperature: { zh: '462°C (平均)', en: '462°C (average)' },
+    moons: '0',
+    fact: { zh: '金星是太阳系中最热的行星，浓厚的二氧化碳大气层造成了极端的温室效应。', en: 'Venus is the hottest planet; a dense carbon-dioxide atmosphere creates an extreme greenhouse effect.' },
     color: '#e8d5a3'
   },
   Earth: {
-    nameCN: '地球', nameEN: 'Earth', type: '岩石行星 (Rocky)',
-    diameter: '12,742 km', distSun: '1.496 亿 km (1 AU)', orbitalPeriod: '365.25 天',
-    temperature: '-89°C ~ 57°C', moons: '1',
-    fact: '地球是已知唯一存在生命的天体，拥有液态水和适宜的大气层。',
+    name: { zh: '地球', en: 'Earth' },
+    type: { zh: '岩石行星 (Rocky)', en: 'Rocky planet' },
+    diameter: '12,742 km',
+    distSun: { zh: '1.496 亿 km (1 AU)', en: '149.6 million km (1 AU)' },
+    orbitalPeriod: { zh: '365.25 天', en: '365.25 days' },
+    temperature: { zh: '-89°C ~ 57°C', en: '-89°C ~ 57°C' },
+    moons: '1',
+    fact: { zh: '地球是已知唯一存在生命的天体，拥有液态水和适宜的大气层。', en: 'Earth is the only known world with life, with liquid water and a suitable atmosphere.' },
     color: '#4488ff'
   },
   Mars: {
-    nameCN: '火星', nameEN: 'Mars', type: '岩石行星 (Rocky)',
-    diameter: '6,779 km', distSun: '2.279 亿 km (1.52 AU)', orbitalPeriod: '687 天',
-    temperature: '-140°C ~ 20°C', moons: '2 (Phobos, Deimos)',
-    fact: '火星因其表面氧化铁而呈现红色，拥有太阳系中最大的火山——奥林帕斯山。',
+    name: { zh: '火星', en: 'Mars' },
+    type: { zh: '岩石行星 (Rocky)', en: 'Rocky planet' },
+    diameter: '6,779 km',
+    distSun: { zh: '2.279 亿 km (1.52 AU)', en: '227.9 million km (1.52 AU)' },
+    orbitalPeriod: { zh: '687 天', en: '687 days' },
+    temperature: { zh: '-140°C ~ 20°C', en: '-140°C ~ 20°C' },
+    moons: '2 (Phobos, Deimos)',
+    fact: { zh: '火星因其表面氧化铁而呈现红色，拥有太阳系中最大的火山——奥林帕斯山。', en: 'Mars appears red due to surface iron oxide and hosts the largest volcano in the solar system, Olympus Mons.' },
     color: '#e0553d'
   },
   Jupiter: {
-    nameCN: '木星', nameEN: 'Jupiter', type: '气态巨行星 (Gas Giant)',
-    diameter: '139,820 km', distSun: '7.786 亿 km (5.2 AU)', orbitalPeriod: '11.86 年',
-    temperature: '-108°C (云顶)', moons: '95+',
-    fact: '木星是太阳系中最大的行星，大红斑是一个持续数百年的巨型风暴。',
+    name: { zh: '木星', en: 'Jupiter' },
+    type: { zh: '气态巨行星 (Gas Giant)', en: 'Gas giant' },
+    diameter: '139,820 km',
+    distSun: { zh: '7.786 亿 km (5.2 AU)', en: '778.6 million km (5.2 AU)' },
+    orbitalPeriod: { zh: '11.86 年', en: '11.86 years' },
+    temperature: { zh: '-108°C (云顶)', en: '-108°C (cloud tops)' },
+    moons: '95+',
+    fact: { zh: '木星是太阳系中最大的行星，大红斑是一个持续数百年的巨型风暴。', en: 'Jupiter is the largest planet; the Great Red Spot is a giant storm that has raged for centuries.' },
     color: '#d4b896'
   },
   Saturn: {
-    nameCN: '土星', nameEN: 'Saturn', type: '气态巨行星 (Gas Giant)',
-    diameter: '116,460 km', distSun: '14.34 亿 km (9.54 AU)', orbitalPeriod: '29.46 年',
-    temperature: '-139°C (云顶)', moons: '146+',
-    fact: '土星以壮观的环系统闻名，主要由冰碎片、岩石碎片和尘埃组成。',
+    name: { zh: '土星', en: 'Saturn' },
+    type: { zh: '气态巨行星 (Gas Giant)', en: 'Gas giant' },
+    diameter: '116,460 km',
+    distSun: { zh: '14.34 亿 km (9.54 AU)', en: '1.43 billion km (9.54 AU)' },
+    orbitalPeriod: { zh: '29.46 年', en: '29.46 years' },
+    temperature: { zh: '-139°C (云顶)', en: '-139°C (cloud tops)' },
+    moons: '146+',
+    fact: { zh: '土星以壮观的环系统闻名，主要由冰碎片、岩石碎片和尘埃组成。', en: 'Saturn is famous for its spectacular ring system, made mostly of ice, rock, and dust.' },
     color: '#e8d5a0'
   },
   Uranus: {
-    nameCN: '天王星', nameEN: 'Uranus', type: '冰巨行星 (Ice Giant)',
-    diameter: '50,724 km', distSun: '28.71 亿 km (19.2 AU)', orbitalPeriod: '84.01 年',
-    temperature: '-197°C (云顶)', moons: '27',
-    fact: '天王星的自转轴几乎平躺在公转平面上（倾斜约 98°），像一个滚动的球。',
+    name: { zh: '天王星', en: 'Uranus' },
+    type: { zh: '冰巨行星 (Ice Giant)', en: 'Ice giant' },
+    diameter: '50,724 km',
+    distSun: { zh: '28.71 亿 km (19.2 AU)', en: '2.87 billion km (19.2 AU)' },
+    orbitalPeriod: { zh: '84.01 年', en: '84.01 years' },
+    temperature: { zh: '-197°C (云顶)', en: '-197°C (cloud tops)' },
+    moons: '27',
+    fact: { zh: '天王星的自转轴几乎平躺在公转平面上（倾斜约 98°），像一个滚动的球。', en: 'Uranus rotates almost on its side (tilted about 98°), like a rolling ball.' },
     color: '#88ccdd'
   },
   Neptune: {
-    nameCN: '海王星', nameEN: 'Neptune', type: '冰巨行星 (Ice Giant)',
-    diameter: '49,244 km', distSun: '44.95 亿 km (30.05 AU)', orbitalPeriod: '164.8 年',
-    temperature: '-201°C (云顶)', moons: '16',
-    fact: '海王星是太阳系中风速最快的行星，风速可达 2,100 km/h。',
+    name: { zh: '海王星', en: 'Neptune' },
+    type: { zh: '冰巨行星 (Ice Giant)', en: 'Ice giant' },
+    diameter: '49,244 km',
+    distSun: { zh: '44.95 亿 km (30.05 AU)', en: '4.5 billion km (30.05 AU)' },
+    orbitalPeriod: { zh: '164.8 年', en: '164.8 years' },
+    temperature: { zh: '-201°C (云顶)', en: '-201°C (cloud tops)' },
+    moons: '16',
+    fact: { zh: '海王星是太阳系中风速最快的行星，风速可达 2,100 km/h。', en: 'Neptune has the fastest winds in the solar system, reaching 2,100 km/h.' },
     color: '#3366cc'
   }
 };

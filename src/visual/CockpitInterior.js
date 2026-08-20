@@ -374,7 +374,7 @@ export class CockpitInterior {
     const retMat = new THREE.MeshBasicMaterial({
       color: ACCENT_ORANGE,
       transparent: true,
-      opacity: 0.07,
+      opacity: 0.28,
       depthTest: false,
       depthWrite: false
     });

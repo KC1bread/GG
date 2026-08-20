@@ -9,7 +9,11 @@
  * 5. 屏幕空间不足时保证弹窗标题栏露出
  * 6. 支持【一键全部最小化】和【一键全部关闭】
  * 7. 本次不实现窗口位置本地缓存，刷新页面全部重置
+ *
+ * 语言：所有标签均存 i18n key，切换语言时重建底栏 + 刷新面板标题。
  */
+import { t, onLangChange, getLang, langLabel, setLang, applyStatic } from '../i18n/i18n.js';
+
 export class PanelManager {
   constructor() {
     this.panels = [];            // 所有已注册面板
@@ -21,31 +25,32 @@ export class PanelManager {
     this.dockEl = null;
     this.dragState = null;
 
-    // 分组定义
+    // 分组定义（label 为 i18n key）
     this.groups = [
-      { id: 'simulation',    label: '🚀仿真控制' },
-      { id: 'observation',   label: '📊数据观测' },
-      { id: 'education',     label: '📚学习教学' },
-      { id: 'visualization', label: '📈可视化工具' },
-      { id: 'vr',            label: '🥽VR设备' },
+      { id: 'simulation',    label: 'pm.group.simulation' },
+      { id: 'observation',   label: 'pm.group.observation' },
+      { id: 'education',     label: 'pm.group.education' },
+      { id: 'visualization', label: 'pm.group.visualization' },
+      { id: 'vr',            label: 'pm.group.vr' },
     ];
 
     // 每个分组内的面板配置（严格按需求归类）
     this.groupPanels = {
-      simulation:    [{ id: 'control-panel',     label: '飞船控制' }],
+      simulation:    [{ id: 'control-panel',     label: 'pm.panel.control' }],
       observation:   [
-        { id: 'hud-panel',          label: 'Relativity HUD' },
-        { id: 'log-panel',          label: '实验记录', isAttached: true },
+        { id: 'hud-panel',          label: 'pm.panel.hud' },
+        { id: 'log-panel',          label: 'pm.panel.log', isAttached: true },
       ],
       education:     [
-        { id: 'high-speed-effects-guide', label: '高速视效概念释义', isToggle: true },
+        { id: 'teaching-mode', label: 'pm.panel.teaching', isToggle: true },
+        { id: 'high-speed-effects-guide', label: 'pm.panel.guide', isToggle: true },
       ],
       visualization: [
-        { id: 'spacetime-panel',    label: 'Minkowski时空图' },
-        { id: 'measurement-panel',  label: '双测量尺' },
+        { id: 'spacetime-panel',    label: 'pm.panel.spacetime' },
+        { id: 'measurement-panel',  label: 'pm.panel.measurement' },
       ],
       vr:            [
-        { id: 'vr-status',          label: 'VR状态提示', isVr: true },
+        { id: 'vr-status',          label: 'pm.panel.vr', isVr: true },
       ],
     };
 
@@ -80,6 +85,31 @@ export class PanelManager {
 
     // 5. 窗口缩放后自动将越界面板拉回视口
     this._initResizeHandler();
+
+    // 6. 语言切换：重建底栏 + 刷新面板标题 / VR 面板文本
+    onLangChange(() => this._relabelAll());
+  }
+
+  /** 语言切换后刷新所有面板管理文本 */
+  _relabelAll() {
+    const wasCollapsed = this.topBarEl?.classList.contains('bottom-bar-collapsed');
+    if (this.topBarEl) {
+      this._createBottomBar();
+      if (wasCollapsed) {
+        this.topBarEl.classList.add('bottom-bar-collapsed');
+        this._updateToggleIcon();
+      }
+    }
+    // 面板标题栏（含 VR 面板）
+    for (const panel of this.panels) {
+      const titleEl = panel.querySelector('.panel-titlebar-text');
+      if (titleEl && panel.dataset.panelTitle) {
+        titleEl.textContent = t(panel.dataset.panelTitle);
+      }
+    }
+    // VR 面板静态文本
+    if (this.vrPanel) applyStatic(this.vrPanel);
+    this._updateCustomControlStates();
   }
 
   // ==========================================================================
@@ -102,11 +132,11 @@ export class PanelManager {
     }
   }
 
-  _setupPanel(panel, title) {
+  _setupPanel(panel, titleKey) {
     // 如果已经设置过 titlebar 则跳过
     if (panel.querySelector('.panel-titlebar')) return;
 
-    panel.dataset.panelTitle = title || panel.id;
+    panel.dataset.panelTitle = titleKey || panel.id;
 
     // 创建标题栏
     const titleBar = document.createElement('div');
@@ -114,13 +144,13 @@ export class PanelManager {
 
     const titleSpan = document.createElement('span');
     titleSpan.className = 'panel-titlebar-text';
-    titleSpan.textContent = title || panel.id;
+    titleSpan.textContent = t(titleKey || panel.id);
 
     const btnGroup = document.createElement('span');
     btnGroup.className = 'panel-titlebar-btns';
 
-    const minBtn = this._createBtn('−', '最小化', () => this._toggleMinimize(panel));
-    const closeBtn = this._createBtn('×', '关闭', () => this._closePanel(panel));
+    const minBtn = this._createBtn('−', t('pm.minimize'), () => this._toggleMinimize(panel));
+    const closeBtn = this._createBtn('×', t('pm.close'), () => this._closePanel(panel));
 
     btnGroup.appendChild(minBtn);
     btnGroup.appendChild(closeBtn);
@@ -174,7 +204,7 @@ export class PanelManager {
     vrPanel.style.zIndex = '50';
 
     // 先设置 panelManager 属性以便 _setupPanel 能获取到标题
-    vrPanel.dataset.panelTitle = 'VR状态检测';
+    vrPanel.dataset.panelTitle = 'pm.vr.title';
 
     // 创建标题栏 (_setupPanel 会处理)
     // 手动构建内容
@@ -182,11 +212,11 @@ export class PanelManager {
     header.className = 'panel-titlebar';
     const titleSpan = document.createElement('span');
     titleSpan.className = 'panel-titlebar-text';
-    titleSpan.textContent = 'VR状态检测';
+    titleSpan.textContent = t('pm.vr.title');
     const btnGroup = document.createElement('span');
     btnGroup.className = 'panel-titlebar-btns';
-    const minBtn = this._createBtn('−', '最小化', () => this._toggleMinimize(vrPanel));
-    const closeBtn = this._createBtn('×', '关闭', () => this._closePanel(vrPanel));
+    const minBtn = this._createBtn('−', t('pm.minimize'), () => this._toggleMinimize(vrPanel));
+    const closeBtn = this._createBtn('×', t('pm.close'), () => this._closePanel(vrPanel));
     btnGroup.appendChild(minBtn);
     btnGroup.appendChild(closeBtn);
     header.appendChild(titleSpan);
@@ -198,12 +228,17 @@ export class PanelManager {
     content.innerHTML = `
       <div class="vr-status-content">
         <div class="vr-status-icon" id="vr-status-icon">🥽</div>
-        <div class="vr-status-title" id="vr-status-title">VR 设备状态</div>
-        <div class="vr-status-detail" id="vr-status-detail"></div>
+        <div class="vr-status-title" id="vr-status-title" data-i18n="pm.vr.status">VR 设备状态</div>
+        <div class="vr-status-detail" id="vr-status-detail">
+          <p data-i18n="pm.vr.unsupported">当前浏览器不支持 VR / WebXR，或未检测到 VR 设备。</p>
+          <p class="small-note" data-i18n="pm.vr.note1">如需体验沉浸式 VR 交互，请使用支持 WebXR 的浏览器（如 Chrome）并连接兼容的 VR 头显设备。</p>
+          <p class="small-note" data-i18n="pm.vr.note2">VR 完整沉浸式交互方案将在后续版本迭代开发。</p>
+        </div>
         <div id="vr-button-container" class="vr-button-container"></div>
       </div>
     `;
     vrPanel.appendChild(content);
+    applyStatic(vrPanel); // 渲染 VR 面板静态文本（当前语言）
 
     vrPanel._minimized = false;
     vrPanel._closed = false;
@@ -212,6 +247,7 @@ export class PanelManager {
     document.body.appendChild(vrPanel);
     this.panelMap.set('vr-status', vrPanel);
     this.panels.push(vrPanel);
+    this.vrPanel = vrPanel;
 
     // 将原有的 VRButton 移入 VR 面板（延迟执行确保 Three.js VRButton 已创建）
     setTimeout(() => {
@@ -255,9 +291,13 @@ export class PanelManager {
   }
 
   _createBottomBar() {
-    // 清除旧的 dock
+    // 清除旧的底栏与浮动菜单（底栏实际 id 为 bottom-bar，历史兼容 panel-dock）
+    const oldBar = document.getElementById('bottom-bar');
+    if (oldBar) oldBar.remove();
     const oldDock = document.getElementById('panel-dock');
     if (oldDock) oldDock.remove();
+    const oldSub = document.getElementById('bottom-bar-sub-panel');
+    if (oldSub) oldSub.remove();
 
     // █ 整体容器：tab（箭头在上）+ bar-inner（按钮在下），联动滑动
     this.topBarEl = document.createElement('div');
@@ -268,7 +308,7 @@ export class PanelManager {
     const tab = document.createElement('button');
     tab.className = 'bottom-bar-tab';
     tab.textContent = '⌃';
-    tab.title = '收起底栏';
+    tab.title = t('pm.collapse');
     tab.addEventListener('click', (e) => {
       e.stopPropagation();
       this._toggleBottomBar();
@@ -285,7 +325,7 @@ export class PanelManager {
 
       const groupLabel = document.createElement('div');
       groupLabel.className = 'bottom-bar-group-label';
-      groupLabel.textContent = group.label;
+      groupLabel.textContent = t(group.label);
       groupEl.appendChild(groupLabel);
 
       const itemsContainer = document.createElement('div');
@@ -293,12 +333,13 @@ export class PanelManager {
 
       const panels = this.groupPanels[group.id] || [];
       for (const cfg of panels) {
+        const label = t(cfg.label);
         if (cfg.isVr) {
           const vrBtn = document.createElement('button');
           vrBtn.className = 'bottom-bar-btn';
-          vrBtn.textContent = cfg.label;
+          vrBtn.textContent = label;
           vrBtn.dataset.panelId = 'vr-status';
-          vrBtn.title = 'VR设备状态检测';
+          vrBtn.title = label;
           vrBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             this._togglePanel('vr-status');
@@ -311,10 +352,10 @@ export class PanelManager {
           // 附属面板（如实验记录）- 展开/收起子面板
           const btn = document.createElement('button');
           btn.className = 'bottom-bar-btn';
-          btn.textContent = cfg.label;
+          btn.textContent = label;
           btn.dataset.panelId = cfg.id;
           btn.dataset.attached = 'true';
-          btn.title = `展开 ${cfg.label}`;
+          btn.title = t('pm.expandX', { label });
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             this._toggleAttachedPanel(cfg.id);
@@ -326,9 +367,9 @@ export class PanelManager {
         if (cfg.isToggle) {
           const btn = document.createElement('button');
           btn.className = 'bottom-bar-btn bottom-bar-toggle-btn';
-          btn.textContent = cfg.label;
+          btn.textContent = label;
           btn.dataset.toggleId = cfg.id;
-          btn.title = `切换 ${cfg.label}`;
+          btn.title = t('pm.toggleX', { label });
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             this._toggleCustomControl(cfg.id);
@@ -339,9 +380,9 @@ export class PanelManager {
 
         const btn = document.createElement('button');
         btn.className = 'bottom-bar-btn';
-        btn.textContent = cfg.label;
+        btn.textContent = label;
         btn.dataset.panelId = cfg.id;
-        btn.title = `打开 ${cfg.label}`;
+        btn.title = t('pm.openX', { label });
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           this._togglePanel(cfg.id);
@@ -360,16 +401,29 @@ export class PanelManager {
     const quickActions = document.createElement('div');
     quickActions.className = 'bottom-bar-quick-actions';
 
+    // 语言切换按钮（循环切换 中文 → English）
+    const langBtn = document.createElement('button');
+    langBtn.className = 'bottom-bar-action-btn bottom-bar-lang-btn';
+    langBtn.textContent = '🌐 ' + langLabel();
+    langBtn.title = t('lang.switchTitle');
+    langBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const order = ['zh', 'en'];
+      const next = order[(order.indexOf(getLang()) + 1) % order.length];
+      setLang(next);
+    });
+    quickActions.appendChild(langBtn);
+
     const minimizeAllBtn = document.createElement('button');
     minimizeAllBtn.className = 'bottom-bar-action-btn';
-    minimizeAllBtn.textContent = '— 全部最小化';
-    minimizeAllBtn.title = '一键全部最小化';
+    minimizeAllBtn.textContent = t('pm.minAll');
+    minimizeAllBtn.title = t('pm.minAllTitle');
     minimizeAllBtn.addEventListener('click', () => this._minimizeAll());
 
     const closeAllBtn = document.createElement('button');
     closeAllBtn.className = 'bottom-bar-action-btn bottom-bar-action-btn-close';
-    closeAllBtn.textContent = '× 全部关闭';
-    closeAllBtn.title = '一键全部关闭';
+    closeAllBtn.textContent = t('pm.closeAll');
+    closeAllBtn.title = t('pm.closeAllTitle');
     closeAllBtn.addEventListener('click', () => this._closeAll());
 
     quickActions.appendChild(minimizeAllBtn);
@@ -389,9 +443,10 @@ export class PanelManager {
     // ── 创建浮动菜单（实验记录：按钮锚定，向上纵向展开） ──
     this.attachedSubPanel = document.createElement('div');
     this.attachedSubPanel.className = 'bottom-bar-sub-panel';
+    this.attachedSubPanel.id = 'bottom-bar-sub-panel';
     this.attachedSubPanel.innerHTML = `
-      <button class="bottom-bar-sub-panel-btn att-export-json" id="att-export-json-btn">导出 JSON</button>
-      <button class="bottom-bar-sub-panel-btn att-export-csv" id="att-export-csv-btn">导出 CSV</button>
+      <button class="bottom-bar-sub-panel-btn att-export-json" id="att-export-json-btn">${t('log.exportJson')}</button>
+      <button class="bottom-bar-sub-panel-btn att-export-csv" id="att-export-csv-btn">${t('log.exportCsv')}</button>
     `;
     this.attachedSubPanel.querySelector('.att-export-json').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -430,7 +485,7 @@ export class PanelManager {
         this.attachedSubPanel.style.bottom = (window.innerHeight - rect.top + gap) + 'px';
         this.attachedSubPanel.classList.add('sub-panel-open');
         btn.classList.add('active');
-        btn.title = `收起 ${btn.textContent}`;
+        btn.title = t('pm.collapseX', { label: btn.textContent });
       }
     }
   }
@@ -442,7 +497,7 @@ export class PanelManager {
     const attachedBtns = this.topBarEl.querySelectorAll('[data-attached="true"]');
     attachedBtns.forEach(btn => {
       btn.classList.remove('active');
-      btn.title = `展开 ${btn.textContent}`;
+      btn.title = t('pm.expandX', { label: btn.textContent });
     });
   }
 
@@ -465,12 +520,17 @@ export class PanelManager {
     if (!tab) return;
     const isCollapsed = this.topBarEl.classList.contains('bottom-bar-collapsed');
     tab.textContent = isCollapsed ? '⌄' : '⌃';
-    tab.title = isCollapsed ? '展开底栏' : '收起底栏';
+    tab.title = isCollapsed ? t('pm.expand') : t('pm.collapse');
   }
 
   _toggleCustomControl(controlId) {
     if (controlId === 'high-speed-effects-guide') {
       window.rvApp?.toggleHighSpeedEffectsGuide?.();
+    }
+    if (controlId === 'teaching-mode') {
+      const app = window.rvApp;
+      const next = app?.state?.effectMode === 'teaching' ? 'physical' : 'teaching';
+      app?._setEffectMode?.(next);
     }
     this._updateCustomControlStates();
   }
@@ -484,7 +544,13 @@ export class PanelManager {
         const enabled = !!window.rvApp?.state?.highSpeedEffectsGuideEnabled;
         btn.classList.toggle('active', enabled);
         btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-        btn.title = enabled ? '关闭 高速视效概念释义' : '打开 高速视效概念释义';
+        btn.title = enabled ? t('pm.guide.off') : t('pm.guide.on');
+      }
+      if (controlId === 'teaching-mode') {
+        const enabled = window.rvApp?.state?.effectMode === 'teaching';
+        btn.classList.toggle('active', enabled);
+        btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        btn.title = enabled ? t('pm.teaching.off') : t('pm.teaching.on');
       }
     });
   }
@@ -1030,10 +1096,11 @@ export class PanelManager {
       btn.classList.toggle('active', isOpen);
       btn.classList.toggle('topmost', isActive && isOpen);
 
+      const label = btn.textContent;
       if (isOpen) {
-        btn.title = panel._minimized ? `恢复 ${btn.textContent}` : `${btn.textContent} (已打开，点击置顶)`;
+        btn.title = panel._minimized ? t('pm.restoreX', { label }) : t('pm.topmostX', { label });
       } else {
-        btn.title = `打开 ${btn.textContent}`;
+        btn.title = t('pm.openX', { label });
       }
     }
     this._updateCustomControlStates();

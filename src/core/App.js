@@ -21,24 +21,30 @@ import { terrellTransformMatrix } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
 import { VrStatus } from '../ui/VrStatus.js';
 import { VRControllerInput } from '../input/VRControllerInput.js';
+import { t, L, onLangChange, applyStatic } from '../i18n/i18n.js';
+import { showErrorBanner } from './ErrorBanner.js';
 
 /**
  * RelativisticVoyagerApp — main application controller.
  *
  * Flight model:
- * - W / ArrowUp   : move forward  (nose direction) + ignite thrust flame
+ * - W / ArrowUp   : move forward  (nose / velocity direction) + ignite thrust flame
  * - S / ArrowDown : move backward
- * - A / ArrowLeft : turn left
- * - D / ArrowRight: turn right
+ * - A / ArrowLeft : turn left  (changes heading / velocity, not look)
+ * - D / ArrowRight: turn right (changes heading / velocity, not look)
  * - Q             : move up
  * - E             : move down
  * - Shift         : increase speed (beta)
  * - Ctrl          : decrease speed (beta)
  * - V             : toggle first-person / third-person view
+ * - P             : toggle inspect look (pointer lock). Esc recenters.
+ * - Right mouse   : hold to peek; release recenters look to heading
+ * - C             : recenter look to ship heading
  * - Speed = beta (0–0.99) × maxSpeed
  *
- * Camera: supports first-person (cockpit) and third-person chase cam.
- * Star field: rich, static, centered at origin.
+ * Look vs motion: camera yaw/pitch is independent of ship heading.
+ * Relativistic aberration / Doppler follow velocity, not look direction.
+ * Camera: first-person (cockpit) and third-person chase cam.
  * Planet info: click any planet to see details.
  */
 export class RelativisticVoyagerApp {
@@ -47,6 +53,7 @@ export class RelativisticVoyagerApp {
       beta: 0,
       frame: 'earth',
       viewMode: 'measured',
+      effectMode: 'teaching',
       terrellMode: 'precise',   // 'lorentzOnly' | 'precise' | 'enhanced'
       viewPerspective: 'thirdPerson',
       highSpeedEffectsGuideEnabled: false,
@@ -98,12 +105,18 @@ export class RelativisticVoyagerApp {
     this._velocityForward = new THREE.Vector3(0, 0, -1); // ship velocity direction
     this.postProcess = null;  // relativistic full-screen shader
 
-    // Free-look state — toggle with P key, mouse to look around
+    // Free-look state — independent of heading / velocity
     this.freeLookYaw = 0;          // horizontal angle offset from ship heading
     this.freeLookPitch = 0;        // vertical angle (-π/2 … π/2)
     this._freeLookActive = false;  // right mouse button held
     this._freeLookToggled = false; // P-key toggle — persists until pressed again
+    this._lookReturning = false;   // lerp look back to heading after peek
     this._mouseSensitivity = 0.004;
+    this._shipForward = new THREE.Vector3(0, 0, -1);
+    this._lookDir = new THREE.Vector3(0, 0, -1);
+    this._lookAtPoint = new THREE.Vector3();
+    this._velView = new THREE.Vector3();
+    this.cockpitRig = null;
 
     // Raycaster for planet click detection
     this.raycaster = new THREE.Raycaster();
@@ -124,15 +137,58 @@ export class RelativisticVoyagerApp {
 
   init() {
     this.logger = new DataLogger();
-    this.setupThree();
-    this.setupScene();
-    this.setupUi();
+    this._initErrors = [];
+
+    // 分步容错：任何一步失败不阻断其余功能（2D 面板仍可用）
+    const step = (name, fn) => {
+      try {
+        fn();
+      } catch (err) {
+        console.error(`[RV] ${name} 初始化失败：`, err);
+        this._initErrors.push({ name, err });
+      }
+    };
+
+    step('3D 渲染器', () => this.setupThree());
+    step('3D 场景', () => this.setupScene());
+    step('界面', () => this.setupUi());
     this.setupKeyboard();
-    this.setupMouse();
-    this.setupResize();
+    step('鼠标交互', () => this.setupMouse());
+    step('窗口自适应', () => this.setupResize());
     this.setupVr();
+
+    if (this._initErrors.length) {
+      showErrorBanner(
+        '初始化部分失败（2D 面板仍可用）',
+        this._initErrors
+          .map((e) => `[${e.name}] ${(e.err && e.err.message) || e.err}`)
+          .join('\n')
+      );
+    }
     this.logger.log('app_init');
-    this.renderer.setAnimationLoop(() => this.update());
+
+    if (this.renderer) {
+      this.renderer.setAnimationLoop(() => this.update());
+    } else {
+      this._startFallbackLoop();
+    }
+  }
+
+  /** WebGL 不可用时的兜底循环：仅驱动 2D 面板（HUD / 双时钟 / 时空图） */
+  _startFallbackLoop() {
+    const loop = () => {
+      try {
+        const r = computeRelativityState(this.state);
+        this.hud?.update();
+        this.dualClock?.update(r);
+        this.spacetimeDiagram?.update();
+        this._updateMeasurementPanel(r);
+      } catch (err) {
+        // 单帧错误忽略，避免死循环抛错
+      }
+      requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
   }
 
   // ---- Three.js / renderer / camera ------------------------------------------
@@ -163,8 +219,14 @@ export class RelativisticVoyagerApp {
     document.body.appendChild(VRButton.createButton(this.renderer));
 
     // Relativistic post-process (full-screen aberration + Doppler + beaming)
-    this.postProcess = new RelativisticPostProcess();
-    this.postProcess.init(this.renderer, this.camera);
+    // 失败时降级为无后处理，不影响主场景渲染
+    try {
+      this.postProcess = new RelativisticPostProcess();
+      this.postProcess.init(this.renderer, this.camera);
+    } catch (err) {
+      console.error('[RV] 后处理初始化失败，已降级（无相对论后处理）：', err);
+      this.postProcess = null;
+    }
   }
 
   // ---- Scene objects ---------------------------------------------------------
@@ -178,7 +240,7 @@ export class RelativisticVoyagerApp {
     this.refs = addReferenceScene(this.scene);
 
     // Star field — 新版高性能点云星空 (支持 Shader 内实时光行差/多普勒/头灯效应)
-    this.starField = new StarField({ count: 24000, radius: 3000 });
+    this.starField = new StarField({ count: 72000, radius: 3000 });
     this.starField.addTo(this.scene);
 
     // Spacecraft — scaled down 10× (0.12 vs original 1.2)
@@ -189,9 +251,11 @@ export class RelativisticVoyagerApp {
       this.shipPosition.x, this.shipPosition.y, this.shipPosition.z
     );
 
-    // Cockpit interior — attached to camera, shown only in first-person
+    // Cockpit interior — locked to ship heading, not camera look
+    this.cockpitRig = new THREE.Group();
+    this.scene.add(this.cockpitRig);
     this.cockpit = new CockpitInterior();
-    this.cockpit.attachTo(this.camera);
+    this.cockpit.attachTo(this.cockpitRig);
     this.cockpit.hide();
   }
 
@@ -209,10 +273,15 @@ export class RelativisticVoyagerApp {
     this.comparisonEarthSpacetime = null;
     this.comparisonShipSpacetime  = null;
 
-    // ── 双测量尺 3D 预览 ──
+    // ── 双测量尺 3D 预览（WebGL 小窗；创建失败则置空，App 各处以 ?. 调用） ──
     this.measurementPreviewCanvas = document.getElementById('measurement-preview-canvas');
     if (this.measurementPreviewCanvas) {
-      this.measurementPreview = new MeasurementPreview(this.measurementPreviewCanvas);
+      try {
+        this.measurementPreview = new MeasurementPreview(this.measurementPreviewCanvas);
+      } catch (err) {
+        console.error('[RV] 双测量尺预览初始化失败，已跳过：', err);
+        this.measurementPreview = null;
+      }
     }
     this.measurementResetBtn = document.getElementById('measurement-reset-btn');
     if (this.measurementResetBtn) {
@@ -239,8 +308,14 @@ export class RelativisticVoyagerApp {
     this.comparisonEarthCanvas = document.getElementById('comparison-earth-canvas');
     this.comparisonShipCanvas  = document.getElementById('comparison-ship-canvas');
     if (this.comparisonEarthCanvas && this.comparisonShipCanvas) {
-      this.comparisonEarthPreview = new MeasurementPreview(this.comparisonEarthCanvas);
-      this.comparisonShipPreview  = new MeasurementPreview(this.comparisonShipCanvas);
+      try {
+        this.comparisonEarthPreview = new MeasurementPreview(this.comparisonEarthCanvas);
+        this.comparisonShipPreview  = new MeasurementPreview(this.comparisonShipCanvas);
+      } catch (err) {
+        console.error('[RV] 并列预览初始化失败，已跳过：', err);
+        this.comparisonEarthPreview = null;
+        this.comparisonShipPreview  = null;
+      }
     }
     this.comparisonEls = {
       modeEarth:     document.getElementById('comp-mode-earth'),
@@ -274,7 +349,7 @@ export class RelativisticVoyagerApp {
       const toggleBadgeBtn = document.createElement('button');
       toggleBadgeBtn.className = 'panel-action-btn';
       toggleBadgeBtn.textContent = '●';
-      toggleBadgeBtn.title = '切换顶部信息状态栏';
+      toggleBadgeBtn.title = t('pm.badge.toggle');
       toggleBadgeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const badge = document.getElementById('mode-badge');
@@ -297,10 +372,37 @@ export class RelativisticVoyagerApp {
     this.highSpeedGuideReadouts = {
       beta: document.getElementById('high-speed-guide-beta'),
       gamma: document.getElementById('high-speed-guide-gamma'),
-      shift: document.getElementById('high-speed-guide-shift')
+      shift: document.getElementById('high-speed-guide-shift'),
+      effect: document.getElementById('high-speed-guide-effect')
+    };
+    this.lookHeadingHud = {
+      root: document.getElementById('crosshair'),
+      marker: document.getElementById('heading-marker'),
+      edge: document.getElementById('heading-edge'),
+      edgeArrow: document.querySelector('#heading-edge .heading-edge-arrow'),
+      edgeLabel: document.querySelector('#heading-edge .heading-edge-label'),
+      hint: document.getElementById('look-offset-hint')
     };
 
     this.onStateChanged();
+
+    // 语言切换：全局刷新所有动态文本（面板/图例/弹层各自监听）
+    this._setupI18n();
+  }
+
+  /** 语言切换总调度：静态文本 + HUD + 双时钟 + 测量面板 + 时空图 + 弹层（不写日志） */
+  _setupI18n() {
+    onLangChange(() => {
+      applyStatic();
+      this.hud?.update();
+      this.dualClock?.refresh();
+      this._updateMeasurementPanel(computeRelativityState(this.state));
+      this.spacetimeDiagram?.update();
+      this.spacetimeHelp?.onFrameChange?.();
+      this.measurementHelp?.setViewMode?.(this.state.viewMode);
+      this._updateTerrellVisibility?.();
+      this.panelManager?._updateCustomControlStates?.();
+    });
   }
 
   // ---- Keyboard ---------------------------------------------------------------
@@ -324,6 +426,22 @@ export class RelativisticVoyagerApp {
 
     if (key === 'p' || key === 'P') {
       if (pressed) this._toggleFreeLook();
+      return;
+    }
+
+    if (key === 't' || key === 'T') {
+      if (pressed && !this.keys.ctrl) {
+        const next = this.state.effectMode === 'teaching' ? 'physical' : 'teaching';
+        this._setEffectMode(next);
+      }
+      return;
+    }
+
+    if ((key === 'c' || key === 'C') && !this.keys.ctrl) {
+      if (pressed) {
+        this._lookReturning = false;
+        this._recenterLook();
+      }
       return;
     }
 
@@ -357,8 +475,7 @@ export class RelativisticVoyagerApp {
     const sel = document.getElementById('perspective-select');
     if (sel) sel.value = mode;
 
-    this.freeLookYaw = 0;
-    this.freeLookPitch = 0;
+    this._recenterLook();
 
     if (mode === 'firstPerson') {
       this.camera.fov = 90;
@@ -377,6 +494,15 @@ export class RelativisticVoyagerApp {
     });
   }
 
+  _setEffectMode(mode) {
+    const next = mode === 'teaching' ? 'teaching' : 'physical';
+    if (this.state.effectMode === next) return;
+    this.state.effectMode = next;
+    this.logger.log('effect_mode_change', { effectMode: next });
+    this.hud?.update();
+    this.panelManager?._updateCustomControlStates?.();
+  }
+
   toggleHighSpeedEffectsGuide(forceValue) {
     const nextValue = typeof forceValue === 'boolean'
       ? forceValue
@@ -387,6 +513,30 @@ export class RelativisticVoyagerApp {
     return nextValue;
   }
 
+  _getShipForward(out) {
+    return out.set(
+      -Math.sin(this.shipHeading),
+      0,
+      -Math.cos(this.shipHeading)
+    );
+  }
+
+  _getLookDirection(out) {
+    const totalYaw = this.shipHeading + this.freeLookYaw;
+    const cosPitch = Math.cos(this.freeLookPitch);
+    return out.set(
+      -Math.sin(totalYaw) * cosPitch,
+      Math.sin(this.freeLookPitch),
+      -Math.cos(totalYaw) * cosPitch
+    );
+  }
+
+  _recenterLook() {
+    this.freeLookYaw = 0;
+    this.freeLookPitch = 0;
+    this._lookReturning = false;
+  }
+
   _toggleFreeLook() {
     this._freeLookToggled = !this._freeLookToggled;
     const canvas = this.renderer.domElement;
@@ -394,12 +544,106 @@ export class RelativisticVoyagerApp {
     if (this._freeLookToggled) {
       this._lastMouseX = undefined;
       this._lastMouseY = undefined;
-      canvas.style.cursor = 'move';
+      this._lookReturning = false;
+      canvas.style.cursor = 'none';
+      canvas.requestPointerLock?.();
       this.logger.log('freelook_toggle', { active: true });
     } else {
+      this._recenterLook();
       canvas.style.cursor = '';
+      if (document.pointerLockElement === canvas) {
+        document.exitPointerLock?.();
+      }
       this.logger.log('freelook_toggle', { active: false });
     }
+  }
+
+  _updateLookHeadingHud() {
+    const hud = this.lookHeadingHud;
+    if (!hud?.root) return;
+
+    const isFP = this.state.viewPerspective === 'firstPerson';
+    hud.root.classList.toggle('hidden', !isFP);
+    if (!isFP) return;
+
+    const align = THREE.MathUtils.clamp(
+      this._lookDir.dot(this._velocityForward), -1, 1
+    );
+    const offsetDeg = THREE.MathUtils.radToDeg(Math.acos(align));
+    const offAxis = offsetDeg > 8;
+    hud.root.classList.toggle('off-axis', offAxis);
+
+    if (hud.hint) {
+      hud.hint.classList.toggle('hidden', !offAxis);
+      if (offAxis) {
+        const deg = Math.round(offsetDeg);
+        if (this._freeLookToggled) {
+          hud.hint.textContent = t('hint.observing', { deg });
+        } else if (this._freeLookActive) {
+          hud.hint.textContent = t('hint.peek', { deg });
+        } else {
+          hud.hint.textContent = t('hint.off', { deg });
+        }
+      }
+    }
+
+    if (!hud.marker || !hud.edge) return;
+
+    if (!offAxis) {
+      hud.marker.classList.add('hidden');
+      hud.edge.classList.add('hidden');
+      return;
+    }
+
+    this._velView.copy(this._velocityForward)
+      .transformDirection(this.camera.matrixWorldInverse);
+    const inFront = this._velView.z < -0.02;
+    const fov = this.camera.fov * Math.PI / 180;
+    const halfH = Math.tan(fov * 0.5);
+    const halfW = halfH * this.camera.aspect;
+    const ndcX = inFront ? (this._velView.x / -this._velView.z) / halfW : 0;
+    const ndcY = inFront ? (this._velView.y / -this._velView.z) / halfH : 0;
+    const onScreen = inFront && Math.abs(ndcX) < 0.9 && Math.abs(ndcY) < 0.9;
+
+    if (onScreen) {
+      hud.marker.style.left = `${(ndcX * 0.5 + 0.5) * 100}%`;
+      hud.marker.style.top = `${(-ndcY * 0.5 + 0.5) * 100}%`;
+      hud.marker.classList.remove('hidden');
+      hud.edge.classList.add('hidden');
+      return;
+    }
+
+    hud.marker.classList.add('hidden');
+    let dx = inFront ? ndcX : this._velView.x;
+    let dy = inFront ? ndcY : this._velView.y;
+    const mag = Math.hypot(dx, dy);
+    const behind = !inFront && mag < 0.08;
+    if (behind) {
+      dx = 0;
+      dy = -1;
+    } else if (mag > 0.0001) {
+      dx /= mag;
+      dy /= mag;
+    } else {
+      dx = 0;
+      dy = -1;
+    }
+
+    const margin = 56;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const x = THREE.MathUtils.clamp(w * 0.5 + dx * (w * 0.5 - margin), margin, w - margin);
+    const y = THREE.MathUtils.clamp(h * 0.5 - dy * (h * 0.5 - margin), margin, h - margin);
+    hud.edge.style.left = `${x}px`;
+    hud.edge.style.top = `${y}px`;
+    if (hud.edgeArrow) {
+      const angle = Math.atan2(-dy, dx);
+      hud.edgeArrow.style.transform = `rotate(${angle}rad)`;
+    }
+    if (hud.edgeLabel) {
+      hud.edgeLabel.textContent = behind ? t('ch.headingBehind') : t('ch.heading');
+    }
+    hud.edge.classList.remove('hidden');
   }
 
   // ---- Mouse / Planet click detection ----------------------------------------
@@ -433,6 +677,7 @@ export class RelativisticVoyagerApp {
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 2) {
         this._freeLookActive = true;
+        this._lookReturning = false;
         this._lastMouseX = e.clientX;
         this._lastMouseY = e.clientY;
         e.preventDefault();
@@ -442,22 +687,32 @@ export class RelativisticVoyagerApp {
     window.addEventListener('mouseup', (e) => {
       if (e.button === 2) {
         this._freeLookActive = false;
+        if (!this._freeLookToggled) this._lookReturning = true;
       }
     });
 
     window.addEventListener('mousemove', (e) => {
-      if (!this._freeLookToggled && !this._freeLookActive) return;
+      const locked = document.pointerLockElement === canvas;
+      if (!this._freeLookToggled && !this._freeLookActive && !locked) return;
 
-      if (this._lastMouseX === undefined) {
+      let dx;
+      let dy;
+      if (locked) {
+        dx = e.movementX;
+        dy = e.movementY;
+      } else {
+        if (this._lastMouseX === undefined) {
+          this._lastMouseX = e.clientX;
+          this._lastMouseY = e.clientY;
+          return;
+        }
+        dx = e.clientX - this._lastMouseX;
+        dy = e.clientY - this._lastMouseY;
         this._lastMouseX = e.clientX;
         this._lastMouseY = e.clientY;
-        return;
       }
 
-      const dx = e.clientX - this._lastMouseX;
-      const dy = e.clientY - this._lastMouseY;
-      this._lastMouseX = e.clientX;
-      this._lastMouseY = e.clientY;
+      if (dx !== 0 || dy !== 0) this._lookReturning = false;
 
       this.freeLookYaw -= dx * this._mouseSensitivity;
       this.freeLookPitch -= dy * this._mouseSensitivity;
@@ -465,6 +720,14 @@ export class RelativisticVoyagerApp {
         -Math.PI / 2 + 0.02,
         Math.min(Math.PI / 2 - 0.02, this.freeLookPitch)
       );
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      if (document.pointerLockElement === canvas) return;
+      if (!this._freeLookToggled) return;
+      this._freeLookToggled = false;
+      this._recenterLook();
+      canvas.style.cursor = '';
     });
 
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -484,16 +747,16 @@ export class RelativisticVoyagerApp {
     const card = document.getElementById('planet-info-card');
     card.innerHTML = `
       <div class="planet-info-header">
-        <span class="planet-info-name">${info.nameCN} ${info.nameEN}</span>
-        <span class="planet-info-type">${info.type}</span>
+        <span class="planet-info-name">${L(info.name)}</span>
+        <span class="planet-info-type">${L(info.type)}</span>
       </div>
       <div class="planet-info-body">
-        <div class="planet-info-row"><span>直径 Diameter</span><span>${info.diameter}</span></div>
-        <div class="planet-info-row"><span>与太阳距离</span><span>${info.distSun}</span></div>
-        <div class="planet-info-row"><span>公转周期</span><span>${info.orbitalPeriod}</span></div>
-        <div class="planet-info-row"><span>温度</span><span>${info.temperature}</span></div>
-        <div class="planet-info-row"><span>卫星 Moons</span><span>${info.moons}</span></div>
-        <div class="planet-info-fact">💡 ${info.fact}</div>
+        <div class="planet-info-row"><span>${t('planet.diameter')}</span><span>${info.diameter}</span></div>
+        <div class="planet-info-row"><span>${t('planet.distSun')}</span><span>${L(info.distSun)}</span></div>
+        <div class="planet-info-row"><span>${t('planet.period')}</span><span>${L(info.orbitalPeriod)}</span></div>
+        <div class="planet-info-row"><span>${t('planet.temp')}</span><span>${L(info.temperature)}</span></div>
+        <div class="planet-info-row"><span>${t('planet.moons')}</span><span>${info.moons}</span></div>
+        <div class="planet-info-fact">💡 ${L(info.fact)}</div>
       </div>
     `;
 
@@ -680,7 +943,7 @@ export class RelativisticVoyagerApp {
     });
     this._updateMeasurementPanel(computed);
     this.hud.update();
-    this.spacetimeDiagram.update();
+    this.spacetimeDiagram?.update();
     this.spacetimeHelp?.onFrameChange();
     // 测量尺弹层：同步显示模式（平行尺标题颜色 黄=Measured / 蓝=Observed）
     this.measurementHelp?.setViewMode(this.state.viewMode);
@@ -715,7 +978,11 @@ export class RelativisticVoyagerApp {
   /** 当前显示模式 + Terrell 档位（简略文字，仅双测量尺面板使用） */
   _modeLabel() {
     if (this.state.viewMode !== 'observed') return 'Measured';
-    const names = { lorentzOnly: '纯长度收缩', precise: 'P-T 精确', enhanced: '增强教学' };
+    const names = {
+      lorentzOnly: t('badge.terrell.lorentzOnly'),
+      precise: t('badge.terrell.precise'),
+      enhanced: t('badge.terrell.enhanced')
+    };
     return `Observed · ${names[this.state.terrellMode] || this.state.terrellMode}`;
   }
 
@@ -801,7 +1068,23 @@ export class RelativisticVoyagerApp {
 
   // ---- Main update loop ------------------------------------------------------
 
+  /**
+   * 每帧主循环（含兜底）：单帧异常自动跳过并限频告警，
+   * 避免 WebGL context 抖动 / 画布尺寸抖动导致画面反复失效。
+   */
   update() {
+    try {
+      this._updateFrame();
+    } catch (err) {
+      const now = performance.now();
+      if (now - (this._lastFrameErrorAt || 0) > 2000) {
+        this._lastFrameErrorAt = now;
+        console.warn('[RV] 帧更新异常（已自动跳过该帧）：', err && err.message ? err.message : err);
+      }
+    }
+  }
+
+  _updateFrame() {
     // ── TEMP 性能探测（定位卡顿根因用，测完删除） ──
     if (!this._perf) {
       this._perf = { sections: {}, frames: 0, lastLog: performance.now() };
@@ -855,33 +1138,19 @@ export class RelativisticVoyagerApp {
         if (this.keys.right) this.shipHeading -= this.turnRate * dt;
       }
 
-      let forward;
-      if (this.state.viewPerspective === 'firstPerson') {
-        const totalYaw = this.shipHeading + this.freeLookYaw;
-        const cosPitch = Math.cos(this.freeLookPitch);
-        forward = new THREE.Vector3(
-          -Math.sin(totalYaw) * cosPitch,
-          Math.sin(this.freeLookPitch),
-          -Math.cos(totalYaw) * cosPitch
-        );
-      } else {
-        forward = new THREE.Vector3(
-          -Math.sin(this.shipHeading), 0, -Math.cos(this.shipHeading)
-        );
-      }
-      this._velocityForward.copy(forward);
+      // Velocity follows the ship's nose only. Free-look never steers.
+      if (this._jumpState === 'idle') {
+        this._getShipForward(this._shipForward);
+        this._velocityForward.copy(this._shipForward);
 
-      if (this._jumpState === 'idle' && this.currentSpeed > 0.0001) {
-        this.shipPosition.add(forward.clone().multiplyScalar(this.currentSpeed * dt));
-        if (this.state.viewPerspective === 'firstPerson') {
-          this.shipHeading += this.freeLookYaw;
-          this.freeLookYaw = 0;
+        if (this.currentSpeed > 0.0001) {
+          this.shipPosition.addScaledVector(this._shipForward, this.currentSpeed * dt);
         }
-      }
 
-      if (this._jumpState === 'idle' && this.keys.backward) {
-        this.shipPosition.add(forward.clone().multiplyScalar(-this.currentSpeed * 0.6 * dt));
-        this.currentSpeed = Math.max(0, this.currentSpeed - this.decelRate * 1.5 * dt);
+        if (this.keys.backward) {
+          this.shipPosition.addScaledVector(this._shipForward, -this.currentSpeed * 0.6 * dt);
+          this.currentSpeed = Math.max(0, this.currentSpeed - this.decelRate * 1.5 * dt);
+        }
       }
 
       if (this._jumpState === 'idle') {
@@ -945,7 +1214,23 @@ export class RelativisticVoyagerApp {
       this.cameraRig.rotation.set(0, this.shipHeading, 0);
       // 同步 _smoothCamPos，供 Terrell 视向计算使用（头部偏移相对行星距离可忽略）
       this._smoothCamPos.copy(this.cameraRig.position);
-    } else if (this.state.viewPerspective === 'firstPerson') {
+    } else {
+      if (
+        this._lookReturning
+        && !this._freeLookActive
+        && !this._freeLookToggled
+      ) {
+        const k = 1 - Math.exp(-12 * dt);
+        this.freeLookYaw += (0 - this.freeLookYaw) * k;
+        this.freeLookPitch += (0 - this.freeLookPitch) * k;
+        if (Math.abs(this.freeLookYaw) < 0.003 && Math.abs(this.freeLookPitch) < 0.003) {
+          this._recenterLook();
+        }
+      }
+
+      this._getLookDirection(this._lookDir);
+
+      if (this.state.viewPerspective === 'firstPerson') {
       const fpOffset = this.firstPersonOffset.clone();
       fpOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), this.shipHeading);
       const fpCamPos = this.shipPosition.clone().add(fpOffset);
@@ -953,14 +1238,8 @@ export class RelativisticVoyagerApp {
       this._smoothCamPos.lerp(fpCamPos, this.cameraLerp * 2.0);
       this.camera.position.copy(this._smoothCamPos);
 
-      const totalYaw = this.shipHeading + this.freeLookYaw;
-      const cosPitch = Math.cos(this.freeLookPitch);
-      const lookDir = new THREE.Vector3(
-        -Math.sin(totalYaw) * cosPitch,
-        Math.sin(this.freeLookPitch),
-        -Math.cos(totalYaw) * cosPitch
-      );
-      this.camera.lookAt(this.camera.position.clone().add(lookDir));
+      this._lookAtPoint.copy(this.camera.position).add(this._lookDir);
+      this.camera.lookAt(this._lookAtPoint);
     } else {
       const totalYaw = this.shipHeading + this.freeLookYaw;
       const euler = new THREE.Euler(this.freeLookPitch, totalYaw, 0, 'YXZ');
@@ -971,23 +1250,32 @@ export class RelativisticVoyagerApp {
       this.camera.position.copy(this._smoothCamPos);
       this.camera.lookAt(this.shipPosition);
     }
+    }
+
+    if (this.cockpitRig) {
+      this.cockpitRig.position.copy(this.camera.position);
+      this.cockpitRig.rotation.set(0, this.shipHeading, 0);
+    }
+    this.camera.updateMatrixWorld();
+    this._updateLookHeadingHud();
 
     _perfMark('camera');
 
     // ---- Relativistic visual effects & Post-process ----------------------------
-    const crosshair = document.getElementById('crosshair');
-    if (crosshair) {
-      crosshair.classList.toggle('hidden', this.state.viewPerspective !== 'firstPerson');
-    }
-
     const b = this.state.beta;
+    const lookVelAlign = THREE.MathUtils.clamp(
+      this._lookDir.dot(this._velocityForward), -1, 1
+    );
+    // Full-screen warp/beaming is a forward-view effect. Fade it out when
+    // looking sideways or backward so StarField redshift is not crushed.
+    const alongVelocity = THREE.MathUtils.smoothstep(lookVelAlign, 0.15, 0.7);
     const usePostProcess = this.state.viewMode === 'observed'
       && b > 0.001
       && this.state.viewPerspective === 'firstPerson'
       && this.postProcess;
 
     if (this.postProcess) {
-      this.postProcess.setTransition(usePostProcess ? 1 : 0);
+      this.postProcess.setTransition(usePostProcess ? alongVelocity : 0);
       this.postProcess.updateTransition(dt);
     }
 
@@ -1000,10 +1288,11 @@ export class RelativisticVoyagerApp {
     }
     actualBeta = THREE.MathUtils.clamp(actualBeta, 0.0, 0.999);
 
-    // 暗角（Vignette Overlay）跟着实际速度变化（若使用 PostProcess 屏效则关闭）
+    const ppBlend = this.postProcess ? this.postProcess.transitionValue : 0;
     const vignette = document.getElementById('tunnel-vignette');
     if (vignette) {
-      vignette.style.opacity = usePostProcess ? '0' : Math.min(0.92, actualBeta * 1.1);
+      const vignetteAmount = alongVelocity * Math.min(0.92, actualBeta * 1.1);
+      vignette.style.opacity = ppBlend > 0.01 ? '0' : String(vignetteAmount);
     }
 
     const guideStrength = (
@@ -1018,6 +1307,7 @@ export class RelativisticVoyagerApp {
     if (guide) {
       guide.style.opacity = guideStrength.toFixed(3);
       guide.classList.toggle('active', guideStrength > 0.01);
+      guide.classList.toggle('teach-on', this.state.effectMode === 'teaching');
     }
     if (this.highSpeedGuideReadouts.beta) {
       this.highSpeedGuideReadouts.beta.textContent = actualBeta.toFixed(3);
@@ -1030,11 +1320,20 @@ export class RelativisticVoyagerApp {
         ? `${Math.max(1, forwardShiftFactor).toFixed(2)}×`
         : '1.00×';
     }
+    if (this.highSpeedGuideReadouts.effect) {
+      this.highSpeedGuideReadouts.effect.textContent =
+        this.state.effectMode === 'teaching' ? t('guide.effect.teaching') : t('guide.effect.physical');
+    }
 
-    // 更新新版 StarField 的光行差、多普勒与头灯效应
-    let visualBeta = Math.max(0.0001, actualBeta);
-    const starfieldVelocityDir = this._velocityForward.clone().normalize();
-    this.starField.setRelativisticState(visualBeta, starfieldVelocityDir);
+    // Aberration / Doppler follow velocity, not camera look.
+    const visualBeta = Math.max(0.0001, actualBeta);
+    this.starField.setCenter(
+      this.camera.position.x,
+      this.camera.position.y,
+      this.camera.position.z
+    );
+    this.starField.setRelativisticState(visualBeta, this._velocityForward);
+    this.starField.setEffectMode(this.state.effectMode);
     // =========================================================================
 
     _perfMark('fx');
@@ -1107,8 +1406,8 @@ export class RelativisticVoyagerApp {
           terrellMode: observed ? this.state.terrellMode : 'lorentzOnly'
         };
         const shipRodState = { ...rodPhysicsState, frame: 'ship', terrellMode: 'lorentzOnly' };
-        this.comparisonEarthPreview.update({ physicsState: earthRodState, shipPosition: this.shipPosition, visible: true });
-        this.comparisonShipPreview.update({ physicsState: shipRodState, shipPosition: this.shipPosition, visible: true });
+        this.comparisonEarthPreview?.update({ physicsState: earthRodState, shipPosition: this.shipPosition, visible: true });
+        this.comparisonShipPreview?.update({ physicsState: shipRodState, shipPosition: this.shipPosition, visible: true });
 
         const earthParallel = 5 * (lengthContractionRatio(this.state.beta));
         if (this.comparisonEls.modeEarth)    this.comparisonEls.modeEarth.textContent    = this._modeLabel();
@@ -1145,17 +1444,20 @@ export class RelativisticVoyagerApp {
     this.hud.update();
     _perfMark('hud');
 
-    this.dualClock.update(r);
+    this.dualClock?.update(r);
     _perfMark('clock');
 
-    if (!isSideBySide) this.spacetimeDiagram.update();
+    if (!isSideBySide) this.spacetimeDiagram?.update();
     _perfMark('spacetime');
 
     _perfMark('panels');
 
     // ---- Final render --------------------------------------------------------
-    if (usePostProcess) {
-      this.postProcess.render(b, this.camera, this.scene, this.renderer, this._velocityForward);
+    if (this.postProcess && this.postProcess.transitionValue > 0.0005) {
+      this.postProcess.render(
+        b, this.camera, this.scene, this.renderer, this._velocityForward,
+        this.state.effectMode === 'teaching' ? 1 : 0
+      );
     } else {
       this.renderer.render(this.scene, this.camera);
     }

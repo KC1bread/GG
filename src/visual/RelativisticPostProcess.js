@@ -88,6 +88,7 @@ export class RelativisticPostProcess {
         uAspect:           { value: size.x / Math.max(1, size.y) },
         uVelocityDirView:  { value: new THREE.Vector3(0, 0, -1) },
         uTransition:       { value: 0 },
+        uTeachBlend:       { value: 1 },
       },
       vertexShader:   VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
@@ -138,8 +139,9 @@ export class RelativisticPostProcess {
    * @param {THREE.Scene} scene — the main scene
    * @param {THREE.WebGLRenderer} renderer
    * @param {THREE.Vector3} velocityWorld — unit vector, ship velocity in world space
+   * @param {number} [teachBlend=0] — 0 physical mapping, 1 teaching exaggeration
    */
-  render(beta, camera, scene, renderer, velocityWorld) {
+  render(beta, camera, scene, renderer, velocityWorld, teachBlend = 0) {
     // Guard: WebXR uses its own framebuffer — skip post-process
     if (renderer.xr && renderer.xr.isPresenting) {
       renderer.render(scene, camera);
@@ -166,6 +168,7 @@ export class RelativisticPostProcess {
     unis.uAspect.value = camera.aspect;
     unis.uVelocityDirView.value.copy(this._velView);
     unis.uTransition.value = this.transitionValue;
+    unis.uTeachBlend.value = THREE.MathUtils.clamp(teachBlend, 0, 1);
 
     // 4. Render full-screen quad to screen
     renderer.render(this.scene, this.orthoCamera);
@@ -242,6 +245,7 @@ uniform float     uFov;       // vertical FOV in radians
 uniform float     uAspect;    // width / height
 uniform vec3      uVelocityDirView; // velocity direction in VIEW space (normalised)
 uniform float     uTransition;
+uniform float     uTeachBlend;
 
 varying vec2 vUv;
 
@@ -263,12 +267,15 @@ void main() {
     -1.0
   ));
 
+  float betaEff = 1.0 - pow(max(0.0, 1.0 - uBeta), mix(1.0, 1.06, uTeachBlend));
+  betaEff = clamp(betaEff, 0.0, 0.999);
+
   // ---- step 2: cos θ' — observed angle between ray and velocity --------------
   float cosThetaObs = dot(rayDir, uVelocityDirView);
 
   // ---- step 3: inverse relativistic aberration -------------------------------
   // cos θ_rest = (cos θ_obs − β) / (1 − β · cos θ_obs)
-  float cosThetaRest = (cosThetaObs - uBeta) / (1.0 - uBeta * cosThetaObs);
+  float cosThetaRest = (cosThetaObs - betaEff) / (1.0 - betaEff * cosThetaObs);
   cosThetaRest = clamp(cosThetaRest, -1.0, 1.0);
   float sinThetaRest = sqrt(max(0.0, 1.0 - cosThetaRest * cosThetaRest));
 
@@ -306,29 +313,25 @@ void main() {
 
   // ---- step 7: relativistic Doppler colour shift -----------------------------
   float df = uGamma * (1.0 + uBeta * cosThetaObs);
-  // Perceptually smooth log-tanh mapping (matches StarField.js)
-  float shift    = tanh(log(clamp(df, 0.08, 12.0)) * 0.55);
+  df = pow(max(df, 0.001), mix(1.0, 1.12, uTeachBlend));
+  float shift    = tanh(log(clamp(df, 0.08, 12.0)) * mix(0.55, 0.78, uTeachBlend));
   float strength = abs(shift);
 
   if (strength > 0.015) {
     if (shift > 0.0) {
-      // Blueshift ahead — cool tint toward ice-blue
-      color.r *= (1.0 - strength * 0.45);
-      color.g *= (1.0 - strength * 0.18);
-      color.b += (1.0 - color.b) * strength * 0.65;
+      color.r *= (1.0 - strength * mix(0.45, 0.52, uTeachBlend));
+      color.g *= (1.0 - strength * mix(0.18, 0.16, uTeachBlend));
+      color.b += (1.0 - color.b) * strength * mix(0.65, 0.78, uTeachBlend);
     } else {
-      // Redshift behind — warm tint toward orange-red
-      color.r += (1.0 - color.r) * strength * 0.55;
-      color.g *= (1.0 - strength * 0.40);
-      color.b *= (1.0 - strength * 0.60);
+      color.r += (1.0 - color.r) * strength * mix(0.55, 0.88, uTeachBlend);
+      color.g *= (1.0 - strength * mix(0.40, 0.28, uTeachBlend));
+      color.b *= (1.0 - strength * mix(0.60, 0.55, uTeachBlend));
     }
   }
 
-  // ---- step 8: intensity beaming (headlight effect) --------------------------
-  // I'/I ≈ df^2.5 (compressed from df^4 for visual balance)
-  // Compressive log tone-map to avoid blown-out highlights at high β
-  float rawBeaming = pow(clamp(df, 0.001, 100.0), 2.5);
+  float rawBeaming = pow(clamp(df, 0.001, 100.0), mix(2.5, 1.45, uTeachBlend));
   float beaming = log(1.0 + rawBeaming * 0.15) / log(1.0 + 100.0 * 0.15);
+  beaming = mix(beaming, max(beaming, mix(0.35, 0.7, uTeachBlend)), step(df, 1.0));
   color.rgb *= beaming;
 
   // ---- step 9: blend with original via uTransition + edge fade ----------------

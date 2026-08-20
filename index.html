@@ -9,16 +9,20 @@
   <div id="app-root"></div>
 
   <section id="intro-panel" class="panel intro-panel">
-    <h1>Relativistic Voyager</h1>
-    <p>相对论航行者：近光速星际旅行沉浸式 3D 可视化交互系统</p>
-    <button id="start-btn">开始任务</button>
+    <h1 data-i18n="intro.title">Relativistic Voyager</h1>
+    <p data-i18n="intro.subtitle">相对论航行者：近光速星际旅行沉浸式 3D 可视化交互系统</p>
+    <div class="intro-lang-switch" role="group" aria-label="Language">
+      <button data-lang="zh">中文</button>
+      <button data-lang="en">EN</button>
+    </div>
+    <button id="start-btn" data-i18n="intro.start">开始任务</button>
   </section>
 
   <section id="control-panel" class="panel control-panel hidden">
-    <h2>飞船控制</h2>
+    <h2 data-i18n="ctl.title">飞船控制</h2>
     <label>
-      速度 β = v/c
-      <button id="reset-btn" style="font-size:10px;padding:1px 8px;margin-left:6px;vertical-align:middle;border-radius:6px;border:1px solid rgba(125,211,252,0.2);background:rgba(125,211,252,0.06);color:#9fb0d0;cursor:pointer;line-height:1.5;display:inline-block;">重置</button>
+      <span data-i18n="ctl.speed">速度 β = v/c</span>
+      <button id="reset-btn" style="font-size:10px;padding:1px 8px;margin-left:6px;vertical-align:middle;border-radius:6px;border:1px solid rgba(125,211,252,0.2);background:rgba(125,211,252,0.06);color:#9fb0d0;cursor:pointer;line-height:1.5;display:inline-block;" data-i18n="ctl.reset">重置</button>
       <input id="speed-slider" type="range" min="0" max="0.99" step="0.001" value="0" />
     </label>
     <div class="speed-row">
@@ -30,45 +34,46 @@
     </div>
 
     <label>
-      参考系
+      <span data-i18n="ctl.frame">参考系</span>
       <select id="frame-select">
-        <option value="earth">地球参考系 Earth frame</option>
-        <option value="ship">飞船参考系 Ship frame</option>
-        <option value="sideBySide">并列比较 Side-by-side</option>
+        <option value="earth" data-i18n="ctl.frame.earth">地球参考系 Earth frame</option>
+        <option value="ship" data-i18n="ctl.frame.ship">飞船参考系 Ship frame</option>
+        <option value="sideBySide" data-i18n="ctl.frame.side">并列比较 Side-by-side</option>
       </select>
     </label>
 
     <label>
-      视角 Perspective
+      <span data-i18n="ctl.perspective">视角 Perspective</span>
       <select id="perspective-select">
-        <option value="thirdPerson">第三人称 Third-person</option>
-        <option value="firstPerson">第一人称 First-person</option>
+        <option value="thirdPerson" data-i18n="ctl.persp.third">第三人称 Third-person</option>
+        <option value="firstPerson" data-i18n="ctl.persp.first">第一人称 First-person</option>
       </select>
     </label>
+    <p class="small-note" data-i18n="ctl.persp.note">第一人称：屏幕中央是视线，橙色「航向」是飞行方向。按住右键偷看（松开回正）；P 持续观察；C 回正；A/D 转向。</p>
 
     <label>
-      显示模式
+      <span data-i18n="ctl.viewmode">显示模式</span>
       <select id="view-mode-select">
-        <option value="measured">Measured：物理测量模式</option>
-        <option value="observed">Observed：视觉观察模式</option>
+        <option value="measured" data-i18n="ctl.viewmode.measured">Measured：物理测量模式</option>
+        <option value="observed" data-i18n="ctl.viewmode.observed">Observed：视觉观察模式</option>
       </select>
     </label>
 
     <label id="terrell-mode-label">
-      Terrell 效果
+      <span data-i18n="ctl.terrell">Terrell 效果</span>
       <select id="terrell-mode-select">
-        <option value="lorentzOnly">纯 Lorentz 收缩</option>
-        <option value="precise" selected>Penrose-Terrell 精确</option>
-        <option value="enhanced">增强教学</option>
+        <option value="lorentzOnly" data-i18n="ctl.terrell.lorentz">纯 Lorentz 收缩</option>
+        <option value="precise" selected data-i18n="ctl.terrell.precise">Penrose-Terrell 精确</option>
+        <option value="enhanced" data-i18n="ctl.terrell.enhanced">增强教学</option>
       </select>
     </label>
 
   </section>
 
   <section id="measurement-panel" class="panel measurement-panel hidden">
-    <h2>双测量尺</h2>
+    <h2 data-i18n="meas.title">双测量尺</h2>
     <div class="measurement-panel-actions">
-      <button id="measurement-reset-btn">复位视角</button>
+      <button id="measurement-reset-btn" data-i18n="meas.reset">复位视角</button>
     </div>
     <!-- 单画布模式 (earth/ship) -->
     <div id="measurement-single-view">
@@ -76,34 +81,34 @@
         <canvas id="measurement-preview-canvas"></canvas>
       </div>
       <dl class="measurement-info">
-        <dt>当前模式</dt><dd id="rod-panel-mode">Measured</dd>
-        <dt>当前平行尺长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
-        <dt>当前垂直尺长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
+        <dt data-i18n="meas.mode">当前模式</dt><dd id="rod-panel-mode">Measured</dd>
+        <dt data-i18n="meas.parallelLen">当前平行尺长度</dt><dd id="rod-panel-parallel-current">5.00</dd>
+        <dt data-i18n="meas.perpLen">当前垂直尺长度</dt><dd id="rod-panel-perpendicular-current">5.00</dd>
       </dl>
     </div>
     <!-- 双画布并列模式 (sideBySide) -->
     <div id="measurement-dual-view" class="hidden">
       <div class="comparison-grid">
         <div class="comparison-col">
-          <div class="comparison-label">🌍 地球参考系</div>
+          <div class="comparison-label" data-i18n="meas.frame.earth">🌍 地球参考系</div>
           <div class="comparison-preview-wrap">
             <canvas id="comparison-earth-canvas"></canvas>
           </div>
           <dl class="comparison-info">
-            <dt>当前模式</dt><dd id="comp-mode-earth">Measured</dd>
-            <dt>当前平行尺长度</dt><dd id="comp-parallel-earth">5.00</dd>
-            <dt>当前垂直尺长度</dt><dd id="comp-perp-earth">5.00</dd>
+            <dt data-i18n="meas.mode">当前模式</dt><dd id="comp-mode-earth">Measured</dd>
+            <dt data-i18n="meas.parallelLen">当前平行尺长度</dt><dd id="comp-parallel-earth">5.00</dd>
+            <dt data-i18n="meas.perpLen">当前垂直尺长度</dt><dd id="comp-perp-earth">5.00</dd>
           </dl>
         </div>
         <div class="comparison-col">
-          <div class="comparison-label">🚀 飞船参考系</div>
+          <div class="comparison-label" data-i18n="meas.frame.ship">🚀 飞船参考系</div>
           <div class="comparison-preview-wrap">
             <canvas id="comparison-ship-canvas"></canvas>
           </div>
           <dl class="comparison-info">
-            <dt>当前模式</dt><dd id="comp-mode-ship">Measured</dd>
-            <dt>当前平行尺长度</dt><dd id="comp-parallel-ship">5.00</dd>
-            <dt>当前垂直尺长度</dt><dd id="comp-perp-ship">5.00</dd>
+            <dt data-i18n="meas.mode">当前模式</dt><dd id="comp-mode-ship">Measured</dd>
+            <dt data-i18n="meas.parallelLen">当前平行尺长度</dt><dd id="comp-parallel-ship">5.00</dd>
+            <dt data-i18n="meas.perpLen">当前垂直尺长度</dt><dd id="comp-perp-ship">5.00</dd>
           </dl>
         </div>
       </div>
@@ -111,40 +116,32 @@
   </section>
 
   <section id="hud-panel" class="panel hud-panel hidden">
-    <h2>Relativity HUD</h2>
+    <h2 data-i18n="hud.title">Relativity HUD</h2>
     <dl>
-      <dt>速度 β</dt><dd id="hud-beta">0.000</dd>
-      <dt>洛伦兹因子 γ</dt><dd id="hud-gamma">1.000</dd>
-      <dt>地球时间</dt><dd id="hud-earth-time">0.00 years</dd>
-      <dt>飞船固有时间</dt><dd id="hud-ship-time">0.00 years</dd>
-      <dt>地球系距离</dt><dd id="hud-earth-distance">4.24 ly</dd>
-      <dt>飞船系距离</dt><dd id="hud-ship-distance">4.24 ly</dd>
-      <dt>到达 ETA</dt><dd id="hud-eta">--</dd>
-      <dt>长度收缩比例</dt><dd id="hud-length-ratio">1.000</dd>
+      <dt data-i18n="hud.beta">速度 β</dt><dd id="hud-beta">0.000</dd>
+      <dt data-i18n="hud.gamma">洛伦兹因子 γ</dt><dd id="hud-gamma">1.000</dd>
+      <dt data-i18n="hud.earthTime">地球时间</dt><dd id="hud-earth-time">0.00 years</dd>
+      <dt data-i18n="hud.shipTime">飞船固有时间</dt><dd id="hud-ship-time">0.00 years</dd>
+      <dt data-i18n="hud.earthDist">地球系距离</dt><dd id="hud-earth-distance">4.24 ly</dd>
+      <dt data-i18n="hud.shipDist">飞船系距离</dt><dd id="hud-ship-distance">4.24 ly</dd>
+      <dt data-i18n="hud.eta">到达 ETA</dt><dd id="hud-eta">--</dd>
+      <dt data-i18n="hud.lengthRatio">长度收缩比例</dt><dd id="hud-length-ratio">1.000</dd>
     </dl>
   </section>
 
-  <section id="mission-panel" class="panel mission-panel hidden">
-    <h2>学习任务</h2>
-    <h3 id="mission-title"></h3>
-    <p id="mission-description"></p>
-    <div id="mission-progress" class="progress"><span></span></div>
-    <button id="next-mission-btn">下一个任务</button>
-  </section>
-
   <section id="spacetime-panel" class="panel spacetime-panel hidden">
-    <h2>Minkowski 时空图</h2>
+    <h2><span data-i18n="st.title">Minkowski 时空图</span></h2>
     <div id="spacetime-single-view">
       <canvas id="spacetime-canvas" width="260" height="260"></canvas>
     </div>
     <div id="spacetime-dual-view" class="hidden">
       <div class="comparison-grid">
         <div class="comparison-col">
-          <div class="comparison-label">🌍 地球参考系</div>
+          <div class="comparison-label" data-i18n="meas.frame.earth">🌍 地球参考系</div>
           <div class="spacetime-dual-wrap"><canvas id="spacetime-earth-canvas" width="240" height="250"></canvas></div>
         </div>
         <div class="comparison-col">
-          <div class="comparison-label">🚀 飞船参考系</div>
+          <div class="comparison-label" data-i18n="meas.frame.ship">🚀 飞船参考系</div>
           <div class="spacetime-dual-wrap"><canvas id="spacetime-ship-canvas" width="240" height="250"></canvas></div>
         </div>
       </div>
@@ -152,12 +149,12 @@
   </section>
 
   <section id="log-panel" class="panel log-panel hidden">
-    <h2>实验记录</h2>
+    <h2 data-i18n="log.title">实验记录</h2>
     <div class="button-row">
-      <button id="export-json-btn">导出 JSON</button>
-      <button id="export-csv-btn">导出 CSV</button>
+      <button id="export-json-btn" data-i18n="log.exportJson">导出 JSON</button>
+      <button id="export-csv-btn" data-i18n="log.exportCsv">导出 CSV</button>
     </div>
-    <p class="small-note">记录速度调节、参考系切换、模式切换、任务与问答行为。</p>
+    <p class="small-note" data-i18n="log.note">记录速度调节、参考系切换、模式切换、任务与问答行为。</p>
   </section>
 
   <div id="mode-badge" class="mode-badge hidden">Measured / Earth</div>
@@ -165,11 +162,21 @@
   <!-- Planet info popup card -->
   <div id="planet-info-card" class="planet-info-card hidden"></div>
 
-  <!-- First-person crosshair (reticle) -->
+  <!-- First-person look reticle + heading (velocity) marker -->
   <div id="crosshair" class="hidden">
     <div class="crosshair-h"></div>
     <div class="crosshair-v"></div>
     <div class="crosshair-dot"></div>
+    <div class="look-label" data-i18n="ch.look">视线</div>
+    <div id="heading-marker" class="hidden">
+      <div class="heading-pip"></div>
+      <span data-i18n="ch.heading">航向</span>
+    </div>
+    <div id="heading-edge" class="hidden">
+      <div class="heading-edge-arrow"></div>
+      <span class="heading-edge-label" data-i18n="ch.heading">航向</span>
+    </div>
+    <div id="look-offset-hint" class="hidden"></div>
   </div>
 
   <!-- Relativistic tunnel vignette — darkens screen edges at near-light-speed -->
@@ -177,21 +184,27 @@
 
   <div id="high-speed-effects-guide" class="high-speed-effects-guide">
     <div class="guide-frame guide-frame-top">
-      <span class="guide-chip">光行差</span>
-      <p>高速前进时，来自前方的星光会被“挤”向视野中心，所以你会看到正前方更密、边缘更空。</p>
+      <span class="guide-chip" data-i18n="guide.aberration">光行差</span>
+      <p data-i18n="guide.p1">高速前进时，来自前方的星光会被"挤"向视野中心，所以你会看到正前方更密、边缘更空。显示模式与教学模式的聚拢幅度基本相同。</p>
+    </div>
+    <div class="guide-frame guide-frame-left">
+      <span class="guide-chip" data-i18n="guide.teachmode">教学模式</span>
+      <p data-i18n="guide.p2">教学档不额外挤星空，而是把后方、稀疏处的红移星放大、加亮、加红，方便在约 0.8c 回头观察。</p>
+      <p class="guide-teach-steps" data-i18n="guide.teachSteps">建议步骤：底栏打开「教学模式」→ 加速到 0.8c → 朝银心密集方向飞 → 转头看后方。底栏「学习教学」里可同时打开本释义。</p>
     </div>
     <div class="guide-frame guide-frame-right">
-      <span class="guide-chip">多普勒频移</span>
-      <p>迎面而来的光波被压缩，前方颜色更容易偏蓝；身后则会被拉长，趋向红移。</p>
+      <span class="guide-chip" data-i18n="guide.doppler">多普勒频移</span>
+      <p data-i18n="guide.p3">迎面而来的光波被压缩，前方颜色更容易偏蓝；身后则会被拉长，趋向红移。教学档会把这种红移画得更显眼，物理读数不变。</p>
     </div>
     <div class="guide-frame guide-frame-bottom">
-      <span class="guide-chip">暗角与头灯效应</span>
-      <p>能量更集中在前向视锥，边缘看起来更暗，中央更亮，像被“拉进”一条高速光隧道。</p>
+      <span class="guide-chip" data-i18n="guide.headlight">暗角与头灯效应</span>
+      <p data-i18n="guide.p4">能量更集中在前向视锥，边缘看起来更暗，中央更亮，像被"拉进"一条高速光隧道。</p>
     </div>
     <div class="guide-corner-stats">
       <span>β <strong id="high-speed-guide-beta">0.000</strong></span>
       <span>γ <strong id="high-speed-guide-gamma">1.00</strong></span>
-      <span>前向蓝移 <strong id="high-speed-guide-shift">1.00×</strong></span>
+      <span><span data-i18n="guide.forwardShift">前向蓝移</span> <strong id="high-speed-guide-shift">1.00×</strong></span>
+      <span><span data-i18n="guide.effect">视效</span> <strong id="high-speed-guide-effect">教学模式</strong></span>
     </div>
   </div>
 

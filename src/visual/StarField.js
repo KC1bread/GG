@@ -103,54 +103,69 @@ uniform vec3 uVelocityDir;
 uniform float uTime;
 uniform float uPixelRatio;
 uniform float uPointScale;
+uniform float uAberrationExp;
+uniform float uDopplerGain;
+uniform float uTeachBlend;
 
 varying vec3 vBaseColor;
 varying float vDoppler;
 varying float vAlpha;
 varying float vBrightness;
+varying float vTeachBlend;
 
 void main() {
   vec3 dir = normalize(position);
   float radius = length(position);
 
   vec3 velocityDir = normalize(uVelocityDir);
-  float beta = clamp(uBeta, 0.0, 0.999);
-  float gamma = inversesqrt(max(0.000001, 1.0 - beta * beta));
+  float betaPhys = clamp(uBeta, 0.0, 0.999);
+  float betaAberr = 1.0 - pow(max(0.0, 1.0 - betaPhys), max(1.0, uAberrationExp));
+  betaAberr = clamp(betaAberr, 0.0, 0.999);
+  float gammaAberr = inversesqrt(max(0.000001, 1.0 - betaAberr * betaAberr));
+  float gammaPhys = inversesqrt(max(0.000001, 1.0 - betaPhys * betaPhys));
 
   float cosTheta = dot(dir, velocityDir);
   vec3 dirParallel = velocityDir * cosTheta;
   vec3 dirPerpendicular = dir - dirParallel;
 
-  // 1. 光行差变换
-  float denom = max(0.0001, 1.0 + beta * cosTheta);
-  float cosThetaPrime = (cosTheta + beta) / denom;
-  vec3 dirPrime = normalize(dirPerpendicular / (gamma * denom) + velocityDir * cosThetaPrime);
+  float denom = max(0.0001, 1.0 + betaAberr * cosTheta);
+  float cosThetaPrime = (cosTheta + betaAberr) / denom;
+  vec3 dirPrime = normalize(dirPerpendicular / (gammaAberr * denom) + velocityDir * cosThetaPrime);
 
   vec3 warpedPosition = dirPrime * radius;
   vec4 mvPosition = modelViewMatrix * vec4(warpedPosition, 1.0);
 
-  // 2. 多普勒因子 D
-  float doppler = gamma * (1.0 + beta * cosTheta);
+  float doppler = gammaPhys * (1.0 + betaPhys * cosTheta);
+  float dopplerVis = pow(max(doppler, 0.001), max(1.0, uDopplerGain));
   float twinkle = 1.0 + sin(uTime * aTwinkleSpeed + aTwinklePhase) * aTwinkleAmp;
 
-  // 3. 相对论光效视觉映射
-  float sizeBoost = pow(clamp(doppler, 0.3, 2.5), 0.85);
-  float brightness = mix(0.5, pow(clamp(doppler, 0.2, 3.0), 1.1), 0.75);
+  // 侧/后方红移量：0.8c 正后方 D≈0.33，教学档主要放大这一段
+  float rearAmt = 1.0 - smoothstep(0.42, 1.05, dopplerVis);
+  float teachRear = uTeachBlend * rearAmt;
 
-  float forwardVisible = 1.0 - smoothstep(2.6, 3.4, doppler);
-  float rearVisible = smoothstep(0.18, 0.28, doppler);
+  float sizeBoost = pow(clamp(dopplerVis, 0.28, 2.5), 0.85);
+  sizeBoost *= mix(1.0, 1.18, uTeachBlend);
+  sizeBoost *= mix(1.0, 2.55, teachRear);
+
+  float brightness = mix(0.72, pow(clamp(dopplerVis, 0.22, 3.0), 1.05), 0.55);
+  brightness = mix(brightness, max(brightness, 1.05), teachRear);
+
+  float forwardVisible = 1.0 - smoothstep(3.2, 4.2, dopplerVis);
+  float rearVisible = mix(mix(0.55, 0.92, uTeachBlend), 1.0, smoothstep(0.01, 0.12, dopplerVis));
   float visibility = forwardVisible * rearVisible;
 
   float pointSize = aBaseSize * sizeBoost * twinkle * uPointScale * uPixelRatio;
   pointSize *= (600.0 / max(1.0, -mvPosition.z));
+  pointSize *= mix(1.15, 1.0, smoothstep(0.05, 0.9, dopplerVis));
 
-  gl_PointSize = clamp(pointSize, 2.0, 48.0);
+  gl_PointSize = clamp(pointSize, mix(2.0, 4.0, uTeachBlend), mix(48.0, 72.0, teachRear));
   gl_Position = projectionMatrix * mvPosition;
 
-  vBaseColor = aColor; 
-  vDoppler = doppler;
+  vBaseColor = aColor;
+  vDoppler = dopplerVis;
   vBrightness = brightness;
-  vAlpha = aBaseAlpha * twinkle * visibility;
+  vAlpha = aBaseAlpha * twinkle * visibility * mix(1.0, 1.55, teachRear);
+  vTeachBlend = uTeachBlend;
 }
 `;
 
@@ -159,13 +174,14 @@ varying vec3 vBaseColor;
 varying float vDoppler;
 varying float vAlpha;
 varying float vBrightness;
+varying float vTeachBlend;
 
-vec3 spectralTint(float doppler) {
-  float mapped = clamp(0.5 + 0.32 * log2(max(doppler, 0.001)), 0.0, 1.0);
+vec3 spectralTint(float doppler, float teach) {
+  float mapped = clamp(0.5 + mix(0.38, 0.48, teach) * log2(max(doppler, 0.001)), 0.0, 1.0);
 
-  vec3 redShift = vec3(0.95, 0.32, 0.15);  
-  vec3 neutral = vec3(0.98, 0.96, 0.92);   
-  vec3 blueShift = vec3(0.42, 0.72, 1.0);  
+  vec3 redShift = mix(vec3(1.0, 0.16, 0.05), vec3(1.0, 0.34, 0.08), teach);
+  vec3 neutral = vec3(0.98, 0.96, 0.92);
+  vec3 blueShift = mix(vec3(0.42, 0.72, 1.0), vec3(0.38, 0.74, 1.0), teach);
 
   if (mapped < 0.5) {
     return mix(redShift, neutral, mapped / 0.5);
@@ -179,27 +195,38 @@ void main() {
   if (r2 > 1.0) discard;
 
   float core = exp(-5.0 * r2);
-  float halo = exp(-1.5 * r2) * 0.30;
+  float rearAmt = 1.0 - smoothstep(0.42, 1.05, vDoppler);
+  float teachRear = vTeachBlend * rearAmt;
+  float halo = exp(-1.5 * r2) * mix(0.30, mix(0.42, 0.62, teachRear), vTeachBlend);
   float sprite = core + halo;
 
-  float shiftAmount = smoothstep(0.0, 0.9, abs(log2(max(vDoppler, 0.001))));
-  vec3 tint = spectralTint(vDoppler);
-  vec3 shiftedColor = mix(vBaseColor, tint, 0.80 * shiftAmount);
+  float shiftAmount = smoothstep(0.0, mix(0.85, 0.42, vTeachBlend), abs(log2(max(vDoppler, 0.001))));
+  vec3 tint = spectralTint(vDoppler, vTeachBlend);
+  vec3 shiftedColor = mix(vBaseColor, tint, mix(0.88, 0.96, vTeachBlend) * shiftAmount);
 
-  float alpha = clamp(vAlpha * sprite, 0.0, 1.0);
-  vec3 color = shiftedColor * mix(0.65, vBrightness, 0.80);
+  float redGate = mix(0.9, 1.12, vTeachBlend);
+  if (vDoppler < redGate) {
+    float redBoost = smoothstep(redGate, mix(0.08, 0.22, vTeachBlend), vDoppler);
+    shiftedColor = mix(shiftedColor, vec3(1.0, 0.30, 0.06), redBoost * mix(0.65, 0.92, vTeachBlend));
+  }
+
+  float alpha = clamp(vAlpha * sprite * mix(1.45, 1.85, teachRear), 0.0, 1.0);
+  vec3 color = shiftedColor * mix(0.75, vBrightness, 0.70);
   color *= (0.7 + core * 0.3);
+  color = mix(color, color * vec3(1.15, 0.55, 0.22), teachRear * 0.35);
 
   gl_FragColor = vec4(color, alpha);
 }
 `;
 
 export class StarField {
-  constructor({ count = 28000, radius = 5000 } = {}) {
+  constructor({ count = 72000, radius = 5000 } = {}) {
     this.count = count;
     this.fixedRadius = radius; 
     this.container = new THREE.Group();
     this._velocityDir = new THREE.Vector3(0, 0, -1);
+    this._effectTarget = { aberrationExp: 1.06, dopplerGain: 1.0, teachBlend: 1 };
+    this._effectCurrent = { aberrationExp: 1.06, dopplerGain: 1.0, teachBlend: 1 };
     this._buildPointCloud();
   }
 
@@ -258,7 +285,10 @@ export class StarField {
         uVelocityDir: { value: this._velocityDir.clone() },
         uTime: { value: 0 },
         uPixelRatio: { value: 1 },
-        uPointScale: { value: 1.5 } 
+        uPointScale: { value: 1.5 },
+        uAberrationExp: { value: 1.06 },
+        uDopplerGain: { value: 1.0 },
+        uTeachBlend: { value: 1 } 
       }
     });
 
@@ -272,6 +302,18 @@ export class StarField {
     if (velocityDir && velocityDir.lengthSq() > 0.000001) {
       this._velocityDir.copy(velocityDir).normalize();
       this.material.uniforms.uVelocityDir.value.copy(this._velocityDir);
+    }
+  }
+
+  setEffectMode(mode) {
+    if (mode === 'teaching') {
+      this._effectTarget.aberrationExp = 1.06;
+      this._effectTarget.dopplerGain = 1.0;
+      this._effectTarget.teachBlend = 1;
+    } else {
+      this._effectTarget.aberrationExp = 1.0;
+      this._effectTarget.dopplerGain = 1.0;
+      this._effectTarget.teachBlend = 0;
     }
   }
 
@@ -291,9 +333,16 @@ export class StarField {
     this.container.position.set(x, y, z);
   }
 
-  update(_dt) {
+  update(dt) {
     this.material.uniforms.uTime.value = performance.now() * 0.001;
     this.material.uniforms.uPixelRatio.value = Math.min(2, window.devicePixelRatio || 1);
-    this.container.rotation.y += 0.00001; 
+
+    const k = 1 - Math.exp(-8 * Math.max(0.001, dt || 0.016));
+    this._effectCurrent.aberrationExp += (this._effectTarget.aberrationExp - this._effectCurrent.aberrationExp) * k;
+    this._effectCurrent.dopplerGain += (this._effectTarget.dopplerGain - this._effectCurrent.dopplerGain) * k;
+    this._effectCurrent.teachBlend += (this._effectTarget.teachBlend - this._effectCurrent.teachBlend) * k;
+    this.material.uniforms.uAberrationExp.value = this._effectCurrent.aberrationExp;
+    this.material.uniforms.uDopplerGain.value = this._effectCurrent.dopplerGain;
+    this.material.uniforms.uTeachBlend.value = this._effectCurrent.teachBlend;
   }
 }
