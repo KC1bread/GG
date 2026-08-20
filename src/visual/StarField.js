@@ -33,7 +33,7 @@ function generateRealisticStarDirection() {
 
     // 4. 【核心修改】引入双层极端非对称密度对比
     // 通过超高幂次（14.0）与更陡峭的银盘约束（* 12.0），在原本就很密集的银心区域内，切出一条更窄、更璀璨的暴风眼核心带
-    const densityWeight = 0.015 + // 极其微量的全天背景星
+    const densityWeight = 0.05 + // 更高的全天背景星密度，让星星铺满整个天球
       // A. 【新增：核心极端高密条带】仅在非常靠近银盘平面且正对银心的一小条缝隙里爆发
       0.45 * Math.exp(-distToGalaxyPlane * 12.0) * Math.pow(intensityToCenter, 14.0) + 
       // B. 经典大尺度银心核
@@ -79,15 +79,15 @@ function starColor() {
 
 function starSize() {
   const r = Math.random();
-  if (r < 0.75) return 1.5 + Math.random() * 1.5; 
-  if (r < 0.95) return 3.0 + Math.random() * 2.0; 
-  return 5.0 + Math.random() * 3.5;               
+  if (r < 0.75) return 1.8 + Math.random() * 1.6;
+  if (r < 0.95) return 3.5 + Math.random() * 2.5;
+  return 6.0 + Math.random() * 4.0;
 }
 
 function starAlpha(size, centerFactor) {
   const sizeBoost = THREE.MathUtils.clamp((size - 1.5) / 7.0, 0, 1);
-  const base = 0.35 + sizeBoost * 0.45 + centerFactor * 0.12;
-  return THREE.MathUtils.clamp(base + Math.random() * 0.08, 0.25, 0.95);
+  const base = 0.5 + sizeBoost * 0.45 + centerFactor * 0.12;
+  return THREE.MathUtils.clamp(base + Math.random() * 0.08, 0.3, 0.98);
 }
 
 const STARFIELD_VERTEX_SHADER = `
@@ -112,6 +112,8 @@ varying float vDoppler;
 varying float vAlpha;
 varying float vBrightness;
 varying float vTeachBlend;
+varying vec2 vStreakDir;
+varying float vStreakLen;
 
 void main() {
   vec3 dir = normalize(position);
@@ -161,6 +163,36 @@ void main() {
   gl_PointSize = clamp(pointSize, mix(2.0, 4.0, uTeachBlend), mix(48.0, 72.0, teachRear));
   gl_Position = projectionMatrix * mvPosition;
 
+  // —— 星点流动感（starbow 拖尾）：速度越高、越靠近聚拢中心，拖尾越长 ——
+  // 聚拢中心 = 正前方速度方向点（光行差汇聚点）；拖尾沿该点向外径向拉长
+  vec3 velocityDirN = normalize(uVelocityDir);
+  vec4 fwdView = modelViewMatrix * vec4(velocityDirN * radius, 1.0);
+  float streakStrength = 0.0;
+  vec2 streakDir = vec2(1.0, 0.0);
+  if (fwdView.z < 0.0) {
+    // 聚拢中心在视野前方才产生流动（看向正后方时消失）
+    vec4 fwdClip = projectionMatrix * fwdView;
+    vec2 starScreen = vec2(
+      gl_Position.x / max(0.0001, gl_Position.w),
+      -gl_Position.y / max(0.0001, gl_Position.w)
+    );
+    vec2 fwdScreen = vec2(
+      fwdClip.x / max(0.0001, fwdClip.w),
+      -fwdClip.y / max(0.0001, fwdClip.w)
+    );
+    vec2 radial = starScreen - fwdScreen;
+    if (dot(radial, radial) > 1e-8) {
+      streakDir = normalize(radial);
+    }
+    // 越靠近聚拢中心（cosTheta 越高）流动越强；随 β 爬升至最大速度
+    float centerProx = smoothstep(0.25, 0.95, cosTheta);
+    streakStrength = betaPhys * centerProx;
+  }
+  vStreakDir = streakDir;
+  vStreakLen = 1.0 + streakStrength * 3.0;
+  // 拉长精灵以容纳拖尾：拖尾宽度保持基础宽度，长度随 vStreakLen 拉长
+  gl_PointSize = min(gl_PointSize * vStreakLen, 160.0);
+
   vBaseColor = aColor;
   vDoppler = dopplerVis;
   vBrightness = brightness;
@@ -175,6 +207,8 @@ varying float vDoppler;
 varying float vAlpha;
 varying float vBrightness;
 varying float vTeachBlend;
+varying vec2 vStreakDir;
+varying float vStreakLen;
 
 vec3 spectralTint(float doppler, float teach) {
   float mapped = clamp(0.5 + mix(0.38, 0.48, teach) * log2(max(doppler, 0.001)), 0.0, 1.0);
@@ -191,13 +225,17 @@ vec3 spectralTint(float doppler, float teach) {
 
 void main() {
   vec2 uv = gl_PointCoord * 2.0 - 1.0;
-  float r2 = dot(uv, uv);
+  // 沿流动方向拉伸：uv 分解为沿 vStreakDir 与垂直分量，沿方向拉长 vStreakLen 倍
+  float along = dot(uv, vStreakDir);
+  float across = dot(uv, vec2(-vStreakDir.y, vStreakDir.x));
+  // 椭圆拖尾：沿流动方向拉长 vStreakLen 倍、宽度保持基础宽度（配合顶点侧放大精灵）
+  float r2 = (along * along) + (across * across) * (vStreakLen * vStreakLen);
   if (r2 > 1.0) discard;
 
   float core = exp(-5.0 * r2);
   float rearAmt = 1.0 - smoothstep(0.42, 1.05, vDoppler);
   float teachRear = vTeachBlend * rearAmt;
-  float halo = exp(-1.5 * r2) * mix(0.30, mix(0.42, 0.62, teachRear), vTeachBlend);
+  float halo = exp(-1.15 * r2) * mix(0.42, mix(0.55, 0.75, teachRear), vTeachBlend);
   float sprite = core + halo;
 
   float shiftAmount = smoothstep(0.0, mix(0.85, 0.42, vTeachBlend), abs(log2(max(vDoppler, 0.001))));
@@ -211,7 +249,7 @@ void main() {
   }
 
   float alpha = clamp(vAlpha * sprite * mix(1.45, 1.85, teachRear), 0.0, 1.0);
-  vec3 color = shiftedColor * mix(0.75, vBrightness, 0.70);
+  vec3 color = shiftedColor * mix(0.85, vBrightness, 0.72);
   color *= (0.7 + core * 0.3);
   color = mix(color, color * vec3(1.15, 0.55, 0.22), teachRear * 0.35);
 

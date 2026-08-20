@@ -201,7 +201,11 @@ export class RelativisticVoyagerApp {
 
   setupThree() {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x020613);
+    // 背景：PIT 星云全景图（equirectangular 4096×2048），覆盖整个天球作为沉浸式背景
+    const nebulaTex = new THREE.TextureLoader().load('PIT/nebula-4k.webp');
+    nebulaTex.mapping = THREE.EquirectangularReflectionMapping;
+    nebulaTex.colorSpace = THREE.SRGBColorSpace;
+    this.scene.background = nebulaTex;
 
     this.camera = new THREE.PerspectiveCamera(
       this.baseFov, window.innerWidth / window.innerHeight, 0.1, 8000
@@ -246,7 +250,7 @@ export class RelativisticVoyagerApp {
     this.refs = addReferenceScene(this.scene);
 
     // Star field — 新版高性能点云星空 (支持 Shader 内实时光行差/多普勒/头灯效应)
-    this.starField = new StarField({ count: 72000, radius: 3000 });
+    this.starField = new StarField({ count: 140000, radius: 3000 });
     this.starField.addTo(this.scene);
 
     // Spacecraft — scaled down 10× (0.12 vs original 1.2)
