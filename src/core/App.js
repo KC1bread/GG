@@ -73,8 +73,14 @@ export class RelativisticVoyagerApp {
     // First-person cockpit camera offset (ship-local space, ship scale 0.12)
     this.firstPersonOffset = new THREE.Vector3(0, 0.06, -0.05);
 
-    // Keyboard state
+    // 键盘持续状态（keydown/keyup 写入）；this.keys 为每帧合并键盘+手柄后的有效输入
     this.keys = {
+      forward: false, backward: false,
+      left: false, right: false,
+      up: false, down: false,
+      shift: false, ctrl: false
+    };
+    this.keyboard = {
       forward: false, backward: false,
       left: false, right: false,
       up: false, down: false,
@@ -430,14 +436,14 @@ export class RelativisticVoyagerApp {
     }
 
     if (key === 't' || key === 'T') {
-      if (pressed && !this.keys.ctrl) {
+      if (pressed && !this.keyboard.ctrl) {
         const next = this.state.effectMode === 'teaching' ? 'physical' : 'teaching';
         this._setEffectMode(next);
       }
       return;
     }
 
-    if ((key === 'c' || key === 'C') && !this.keys.ctrl) {
+    if ((key === 'c' || key === 'C') && !this.keyboard.ctrl) {
       if (pressed) {
         this._lookReturning = false;
         this._recenterLook();
@@ -452,14 +458,14 @@ export class RelativisticVoyagerApp {
       return;
     }
 
-    if (key === 'ArrowUp'    || key === 'w' || key === 'W') this.keys.forward  = pressed;
-    if (key === 'ArrowDown'  || key === 's' || key === 'S') this.keys.backward = pressed;
-    if (key === 'ArrowLeft'  || key === 'a' || key === 'A') this.keys.left     = pressed;
-    if (key === 'ArrowRight' || key === 'd' || key === 'D') this.keys.right    = pressed;
-    if (key === 'q' || key === 'Q') this.keys.up   = pressed;
-    if (key === 'e' || key === 'E') this.keys.down = pressed;
-    if (key === 'Shift')   this.keys.shift = pressed;
-    if (key === 'Control') this.keys.ctrl  = pressed;
+    if (key === 'ArrowUp'    || key === 'w' || key === 'W') this.keyboard.forward  = pressed;
+    if (key === 'ArrowDown'  || key === 's' || key === 'S') this.keyboard.backward = pressed;
+    if (key === 'ArrowLeft'  || key === 'a' || key === 'A') this.keyboard.left     = pressed;
+    if (key === 'ArrowRight' || key === 'd' || key === 'D') this.keyboard.right    = pressed;
+    if (key === 'q' || key === 'Q') this.keyboard.up   = pressed;
+    if (key === 'e' || key === 'E') this.keyboard.down = pressed;
+    if (key === 'Shift')   this.keyboard.shift = pressed;
+    if (key === 'Control') this.keyboard.ctrl  = pressed;
   }
 
   _togglePerspective() {
@@ -519,6 +525,18 @@ export class RelativisticVoyagerApp {
       0,
       -Math.cos(this.shipHeading)
     );
+  }
+
+  // VR：前进方向跟随头显水平朝向（忽略俯仰）；朝正上/正下看时退回船头方向。
+  _getVrForward(out) {
+    this.camera.getWorldDirection(out);
+    out.y = 0;
+    if (out.lengthSq() < 1e-6) {
+      this._getShipForward(out);
+    } else {
+      out.normalize();
+    }
+    return out;
   }
 
   _getLookDirection(out) {
@@ -1109,6 +1127,21 @@ export class RelativisticVoyagerApp {
       this.vrController.update();
     }
 
+    // ---- 合并键盘 + 手柄输入：每帧重建 this.keys（键盘持久态 || 手柄瞬时态） ----
+    {
+      const k = this.keys;
+      const kb = this.keyboard;
+      const g = (this.renderer.xr.isPresenting && this.vrController) ? this.vrController.keys : null;
+      k.forward  = kb.forward  || !!(g && g.forward);
+      k.backward = kb.backward || !!(g && g.backward);
+      k.left     = kb.left     || !!(g && g.left);
+      k.right    = kb.right    || !!(g && g.right);
+      k.up       = kb.up       || !!(g && g.up);
+      k.down     = kb.down     || !!(g && g.down);
+      k.shift    = kb.shift    || !!(g && g.shift);
+      k.ctrl     = kb.ctrl     || !!(g && g.ctrl);
+    }
+
     // ---- Keyboard flight — smooth acceleration / deceleration ----------------
     if (!this.state.paused) {
       this._updateJump(dt);
@@ -1138,9 +1171,14 @@ export class RelativisticVoyagerApp {
         if (this.keys.right) this.shipHeading -= this.turnRate * dt;
       }
 
-      // Velocity follows the ship's nose only. Free-look never steers.
+      // Velocity direction: desktop follows the ship's nose; VR follows the
+      // headset's horizontal look direction. Free-look never steers.
       if (this._jumpState === 'idle') {
-        this._getShipForward(this._shipForward);
+        if (this.renderer.xr.isPresenting) {
+          this._getVrForward(this._shipForward);
+        } else {
+          this._getShipForward(this._shipForward);
+        }
         this._velocityForward.copy(this._shipForward);
 
         if (this.currentSpeed > 0.0001) {

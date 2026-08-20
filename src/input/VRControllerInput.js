@@ -3,15 +3,16 @@ import * as THREE from 'three';
 /**
  * VRControllerInput — generic WebXR controller driver.
  *
- * Maps standard WebXR gamepad input (buttons/axes/handedness) to the app's
- * shared `keys` flight state, so App.js.update()'s flight model runs
- * unchanged. Works with Quest Touch / Index / Vive / PCVR.
+ * Maps standard WebXR gamepad input (buttons/axes/handedness) into this.keys
+ * (a per-frame gamepad state); App.js merges it with keyboard input via OR
+ * before running its unchanged flight model. Works with Quest Touch / Index /
+ * Vive / PCVR.
  *
  * 双手方案：
- *   右手柄  摇杆=前进/后退/转向，扳机=加速 β+
- *   左手柄  扳机=减速 β−，X 键=跳转到下一颗行星
+ *   右手柄  扳机=加速 β+，抓握键=减速 β−
+ *   左手柄  扳机=向前移动（跟随头显朝向），X 键=跳转到下一颗行星
+ *   摇杆不再映射
  */
-const AXIS_DEADZONE = 0.15;
 
 /**
  * Pure mapping: one XRInputSource.gamepad → semantic actions.
@@ -22,10 +23,7 @@ const AXIS_DEADZONE = 0.15;
  * @returns {{forward:boolean,backward:boolean,left:boolean,right:boolean,up:boolean,down:boolean,shift:boolean,ctrl:boolean}}
  */
 export function mapGamepadToActions(gamepad, handedness) {
-  const axes = gamepad.axes || [];
   const buttons = gamepad.buttons || [];
-  const axisX = axes[0] || 0;
-  const axisY = axes[1] || 0;
 
   const actions = {
     forward: false, backward: false,
@@ -35,15 +33,12 @@ export function mapGamepadToActions(gamepad, handedness) {
   };
 
   if (handedness === 'right') {
-    // 右手柄：摇杆飞行（Y=前进/后退，X=转向），扳机=加速 β+（shift）
-    if (axisY >  AXIS_DEADZONE) actions.forward = true;
-    if (axisY < -AXIS_DEADZONE) actions.backward = true;
-    if (axisX < -AXIS_DEADZONE) actions.left = true;
-    if (axisX >  AXIS_DEADZONE) actions.right = true;
+    // 右手柄：扳机=加速 β+（shift），抓握键=减速 β−（ctrl）。摇杆不再使用
     actions.shift = !!(buttons[0] && buttons[0].pressed);
+    actions.ctrl  = !!(buttons[1] && buttons[1].pressed);
   } else if (handedness === 'left') {
-    // 左手柄：扳机=减速 β−（ctrl）
-    actions.ctrl = !!(buttons[0] && buttons[0].pressed);
+    // 左手柄：扳机=向前移动（forward）
+    actions.forward = !!(buttons[0] && buttons[0].pressed);
   }
 
   return actions;
@@ -70,6 +65,13 @@ export class VRControllerInput {
     this.gripL = this.renderer.xr.getControllerGrip(0);
     this.gripR = this.renderer.xr.getControllerGrip(1);
     this._prevButtons = new Map(); // handedness -> Array<boolean> (上帧按钮态)
+    // 手柄瞬时输入状态（每帧重建），由 App.js 与键盘状态合并为最终输入
+    this.keys = {
+      forward: false, backward: false,
+      left: false, right: false,
+      up: false, down: false,
+      shift: false, ctrl: false,
+    };
   }
 
   init() {
@@ -84,26 +86,27 @@ export class VRControllerInput {
     const session = this.renderer.xr.getSession();
     if (!session) return;
 
-    const k = this.app.keys;
-    // 手柄是 XR 内唯一输入源，先清空再写入
-    k.forward = false; k.backward = false;
-    k.left = false; k.right = false;
-    k.up = false; k.down = false;
-    k.shift = false; k.ctrl = false;
+    // 手柄状态每帧重建，写入自身 this.keys（由 App.js 与键盘状态合并，不再覆盖 app.keys）
+    const g = this.keys = {
+      forward: false, backward: false,
+      left: false, right: false,
+      up: false, down: false,
+      shift: false, ctrl: false,
+    };
 
     for (const source of session.inputSources) {
       const gp = source.gamepad;
       if (!gp) continue;
 
       const a = mapGamepadToActions(gp, source.handedness);
-      k.forward  = k.forward  || a.forward;
-      k.backward = k.backward || a.backward;
-      k.left     = k.left     || a.left;
-      k.right    = k.right    || a.right;
-      k.up       = k.up       || a.up;
-      k.down     = k.down     || a.down;
-      k.shift    = k.shift    || a.shift;
-      k.ctrl     = k.ctrl     || a.ctrl;
+      g.forward  = g.forward  || a.forward;
+      g.backward = g.backward || a.backward;
+      g.left     = g.left     || a.left;
+      g.right    = g.right    || a.right;
+      g.up       = g.up       || a.up;
+      g.down     = g.down     || a.down;
+      g.shift    = g.shift    || a.shift;
+      g.ctrl     = g.ctrl     || a.ctrl;
 
       this._handleButtonEdges(source.handedness, gp.buttons);
     }
