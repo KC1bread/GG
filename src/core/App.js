@@ -19,6 +19,7 @@ import { EngineAudio } from '../audio/EngineAudio.js';
 import { computeRelativityState, DEFAULT_TARGET_DISTANCE_LY, lengthContractionRatio } from '../physics/relativity.js';
 import { terrellTransformMatrix } from '../physics/terrell.js';
 import { RelativisticPostProcess } from '../visual/RelativisticPostProcess.js';
+import { HeadlightEffect } from '../visual/HeadlightEffect.js';
 import { VrStatus } from '../ui/VrStatus.js';
 import { VRControllerInput } from '../input/VRControllerInput.js';
 import { t, L, onLangChange, applyStatic } from '../i18n/i18n.js';
@@ -110,6 +111,7 @@ export class RelativisticVoyagerApp {
     this.baseFov = 65;        // camera FOV at rest
     this._velocityForward = new THREE.Vector3(0, 0, -1); // ship velocity direction
     this.postProcess = null;  // relativistic full-screen shader
+    this.headlight = null;    // 第一人称探照灯效应（远处物体束流增亮）
 
     // Free-look state — independent of heading / velocity
     this.freeLookYaw = 0;          // horizontal angle offset from ship heading
@@ -201,11 +203,13 @@ export class RelativisticVoyagerApp {
 
   setupThree() {
     this.scene = new THREE.Scene();
-    // 背景：PIT 星云全景图（equirectangular 4096×2048），覆盖整个天球作为沉浸式背景
+    // 背景：PIT 星云全景图（equirectangular 4096×2048）作为默认背景，
+    // 随后异步把 8k 银河带（8k_stars_milky_way.jpg）以 screen 叠加方式覆在其上。
     const nebulaTex = new THREE.TextureLoader().load('PIT/nebula-4k.webp');
     nebulaTex.mapping = THREE.EquirectangularReflectionMapping;
     nebulaTex.colorSpace = THREE.SRGBColorSpace;
     this.scene.background = nebulaTex;
+    this._compositeMilkyWayBackground();
 
     this.camera = new THREE.PerspectiveCamera(
       this.baseFov, window.innerWidth / window.innerHeight, 0.1, 8000
@@ -239,6 +243,48 @@ export class RelativisticVoyagerApp {
     }
   }
 
+  // 把 8k 银河带（8k_stars_milky_way.jpg）以 screen 叠加方式覆到星云背景上，
+  // 用 canvas 一次性合成为 equirect 背景纹理（之后作为 scene.background 渲染，
+  // 天然具备「无穷远、随相机平移不变」的特性，桌面与 VR 通用）。
+  _compositeMilkyWayBackground() {
+    const BG_W = 4096; // 合成输出分辨率（2:1 equirect）
+    const BG_H = 2048;
+    const MILKY_WAY_OPACITY = 0.75; // 银河带叠加强度（0~1，可调）
+
+    const loadImg = (url) => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('加载失败: ' + url));
+      img.src = url;
+    });
+
+    Promise.all([
+      loadImg('PIT/nebula-4k.webp'),
+      loadImg('PIT/8k_stars_milky_way.jpg'),
+    ])
+      .then(([nebula, milkyWay]) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = BG_W;
+        canvas.height = BG_H;
+        const ctx = canvas.getContext('2d');
+
+        ctx.drawImage(nebula, 0, 0, BG_W, BG_H);
+        ctx.globalCompositeOperation = 'screen';
+        ctx.globalAlpha = MILKY_WAY_OPACITY;
+        ctx.drawImage(milkyWay, 0, 0, BG_W, BG_H);
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 1.0;
+
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        this.scene.background = tex;
+      })
+      .catch((err) => {
+        console.warn('[RV] 银河背景合成失败，保留星云背景：', err);
+      });
+  }
+
   // ---- Scene objects ---------------------------------------------------------
 
   setupScene() {
@@ -250,7 +296,7 @@ export class RelativisticVoyagerApp {
     this.refs = addReferenceScene(this.scene);
 
     // Star field — 新版高性能点云星空 (支持 Shader 内实时光行差/多普勒/头灯效应)
-    this.starField = new StarField({ count: 140000, radius: 3000 });
+    this.starField = new StarField({ count: 90000, radius: 3000 });
     this.starField.addTo(this.scene);
 
     // Spacecraft — scaled down 10× (0.12 vs original 1.2)
@@ -267,6 +313,21 @@ export class RelativisticVoyagerApp {
     this.cockpit = new CockpitInterior();
     this.cockpit.attachTo(this.cockpitRig);
     this.cockpit.hide();
+
+    // ── 探照灯效应（仅第一人称）：远处实体随速度方向增亮/变暗 ──
+    this.headlight = new HeadlightEffect();
+    if (this.solarSystem) {
+      for (const p of this.solarSystem.planets) {
+        this.headlight.registerGroup(p.group, p.group);
+      }
+      if (this.solarSystem.moon) {
+        this.headlight.registerGroup(this.solarSystem.moon.pivot, this.solarSystem.moon.pivot);
+      }
+      this.headlight.registerGroup(this.solarSystem.sunGroup, this.solarSystem.sunGroup);
+    }
+    if (this.refs && this.refs.targetGroup) {
+      this.headlight.registerGroup(this.refs.targetGroup, this.refs.targetGroup);
+    }
   }
 
   // ---- UI --------------------------------------------------------------------
@@ -1387,6 +1448,14 @@ export class RelativisticVoyagerApp {
 
     // ── Penrose-Terrell transforms ──
     this._applyTerrellToScene(r.beta);
+
+    // ── 探照灯效应（仅第一人称；驱动用实际运动速度 actualBeta） ──
+    this.headlight?.update(
+      actualBeta,
+      this._velocityForward,
+      this._smoothCamPos,
+      this.state.viewPerspective === 'firstPerson'
+    );
 
     // ---- Visual modules -------------------------------------------------------
     this.starField.update(dt);

@@ -242,6 +242,8 @@ varying float vTeachBlend;
 varying vec2 vStreakDir;
 varying float vStreakLen;
 
+uniform float uGlobalBrightness;
+
 vec3 spectralTint(float doppler, float teach) {
   float mapped = clamp(0.5 + mix(0.38, 0.48, teach) * log2(max(doppler, 0.001)), 0.0, 1.0);
 
@@ -285,7 +287,7 @@ void main() {
   color *= (0.7 + core * 0.3);
   color = mix(color, color * vec3(1.15, 0.55, 0.22), teachRear * 0.35);
 
-  gl_FragColor = vec4(color, alpha);
+  gl_FragColor = vec4(color * uGlobalBrightness, alpha);
 }
 `;
 
@@ -367,7 +369,8 @@ export class StarField {
         uTeachBlend: { value: 1 },
         uStreamMax: { value: 2.0 },
         uWarp: { value: 0.55 },
-        uStreamSpeed: { value: 0.35 }
+        uStreamSpeed: { value: 0.35 },
+        uGlobalBrightness: { value: 0.55 }
       }
     });
 
