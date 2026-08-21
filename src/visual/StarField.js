@@ -111,6 +111,7 @@ uniform float uDopplerGain;
 uniform float uTeachBlend;
 uniform float uStreamMax;
 uniform float uWarp;
+uniform float uStreamSpeed;
 
 varying vec3 vBaseColor;
 varying float vDoppler;
@@ -130,7 +131,7 @@ void main() {
   // —— 星空流动 + 时空弯曲隧道 ——
   // 1) 流动：星星随速度/时间从聚拢中心向外径向流动并循环，速度越高流得越快越远
   float streamGate = smoothstep(0.12, 0.55, betaPhys);
-  float streamPhase = fract(aStreamPhase + uTime * aStreamSpeed * (0.05 + betaPhys));
+  float streamPhase = fract(aStreamPhase + uTime * aStreamSpeed * uStreamSpeed * (0.05 + betaPhys));
   float streamAngle = streamPhase * uStreamMax * streamGate;
 
   // 2) 时空弯曲：靠近聚拢中心的星被额外拉向中心，形成隧道漩涡（越靠近中心越强）
@@ -365,7 +366,8 @@ export class StarField {
         uDopplerGain: { value: 1.0 },
         uTeachBlend: { value: 1 },
         uStreamMax: { value: 2.0 },
-        uWarp: { value: 0.55 }
+        uWarp: { value: 0.55 },
+        uStreamSpeed: { value: 0.35 }
       }
     });
 
